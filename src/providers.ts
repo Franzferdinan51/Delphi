@@ -28,12 +28,104 @@ function headers(p: ProviderConfig): Record<string, string> {
   };
 }
 
+/**
+ * Short, redacted diagnostic from an upstream error body.
+ * Bodies can echo request content, so the provider's own API key and any
+ * bearer tokens are scrubbed before anything is surfaced. LM Studio wraps
+ * engine failures as {"error":{"code":...,"message":"..."}}, so the inner
+ * message is surfaced when present.
+ */
+async function readErrorDetail(res: Response, p: ProviderConfig): Promise<string> {
+  let text = "";
+  try {
+    text = await res.text();
+  } catch {
+    return "";
+  }
+  const key = p.apiKey.trim();
+  if (key) text = text.split(key).join("[redacted]");
+  text = text.replace(/Bearer\s+[A-Za-z0-9\-._~+/=]+/gi, "Bearer [redacted]");
+  text = text.replace(/\s+/g, " ").trim();
+  const inner = text.match(/"message"\s*:\s*"([^"]{1,300})"/);
+  const detail = (inner ? inner[1] : text).replace(/\\"/g, '"');
+  return detail.length > 400 ? detail.slice(0, 400) + "…" : detail;
+}
+
+export type ProviderErrorKind = "transient" | "deterministic";
+
+/**
+ * Decide whether a failed provider call is worth retrying with backoff.
+ *
+ * Local inference servers (notably LM Studio) surface *transient* engine
+ * crashes — e.g. speculative-decoding batching faults ("speculative batch
+ * index … is not inside the current sub-batch") — as HTTP 400/500 with
+ * server_error bodies, so a bare 400 is treated as transient unless the body
+ * says otherwise. Deterministic failures (auth, context overflow, malformed
+ * request shape) fail fast instead of burning retries.
+ */
+export function classifyProviderError(status: number | null, detail: string): ProviderErrorKind {
+  const d = (detail || "").toLowerCase();
+  if (status === 401 || status === 403 || status === 404) return "deterministic";
+  if (/exceed[^.]{0,60}context|context[^.]{0,60}(size|length|window)|too many tokens/.test(d)) {
+    return "deterministic";
+  }
+  if (status === 400 && /invalid_request|bad request|validation failed|model_?not_?found/.test(d)) {
+    return "deterministic";
+  }
+  return "transient";
+}
+
+/** HTTP error from a provider call, carrying status + redacted detail + retry kind. */
+export class ProviderHttpError extends Error {
+  status: number;
+  detail: string;
+  kind: ProviderErrorKind;
+  constructor(providerName: string, status: number, detail: string) {
+    super(
+      `${providerName} request failed (HTTP ${status}).` +
+        (detail ? ` Upstream: ${detail}` : "") +
+        ` Check provider credentials, model and quota.`,
+    );
+    this.name = "ProviderHttpError";
+    this.status = status;
+    this.detail = detail;
+    this.kind = classifyProviderError(status, detail);
+  }
+}
+
+/** Small sleep helper for retry backoff. Exported for tests. */
+export const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Map with bounded parallelism. Local inference servers get flaky under
+ * full parallel load (LM Studio's speculative-batching engine bug), so
+ * council rounds go through this instead of unbounded Promise.all.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workerCount = Math.max(1, Math.min(Math.max(1, Math.floor(limit) || 1), items.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 /** Low-level OpenAI-compatible chat call. Exported for priors + question gate. */
 export async function chatCompletion(
   provider: ProviderConfig,
   system: string,
   user: string,
-  timeoutMs = 90000,
+  timeoutMs = 300000,
 ): Promise<string> {
   const res = await fetch(`${provider.endpoint.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
@@ -49,9 +141,8 @@ export async function chatCompletion(
     }),
   });
   if (!res.ok) {
-    // Upstream bodies may echo authorization headers or prompt content.
-    await res.body?.cancel();
-    throw new Error(`${provider.name} request failed (HTTP ${res.status}). Check provider credentials, model and quota.`);
+    const detail = await readErrorDetail(res, provider);
+    throw new ProviderHttpError(provider.name, res.status, detail);
   }
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
@@ -70,29 +161,67 @@ export interface LiveOpinion {
   error?: string;
 }
 
-/** Ask a live provider; one retry through the quality gate. */
+export interface AskLiveOptions {
+  /**
+   * Backoff (ms) between transient-error retries. Defaults to
+   * [2000, 6000, 15000]. Pass [0, 0, 0] in tests to skip waiting.
+   */
+  retryDelaysMs?: number[];
+}
+
+const DEFAULT_RETRY_DELAYS_MS = [2000, 6000, 15000];
+
+/** Classify a non-HTTP throw (network failure, timeout, abort) for retry. */
+function kindOfThrown(e: unknown): ProviderErrorKind {
+  if (e instanceof ProviderHttpError) return e.kind;
+  // Network/timeout/abort failures are transient by nature.
+  return "transient";
+}
+
+/**
+ * Ask a live provider. When the quality gate rejects a response (usually a
+ * format miss from a smaller local model), retry with a format-repair nudge
+ * that names exactly what was wrong instead of just resending the prompt.
+ *
+ * Transient provider failures (5xx, timeouts, and local-engine crashes that
+ * surface as 400s) are retried up to 3 times with 2s/6s/15s backoff
+ * (4 total attempts); deterministic failures (auth, context overflow,
+ * malformed requests) fail fast.
+ */
 export async function askLive(
   provider: ProviderConfig,
   councilor: CouncilorDef,
   brief: BriefInput,
-  critic?: { ownProbability: number; peers: Array<{ name: string; probability: number; reasoning: string }> },
+  critic?: { ownProbability: number | undefined; peers: Array<{ name: string; probability: number; reasoning: string }> },
+  opts: AskLiveOptions = {},
 ): Promise<LiveOpinion> {
   const user = critic
     ? buildCriticPrompt(councilor, brief, critic.ownProbability, critic.peers)
     : buildBriefPrompt(councilor, brief);
+  let userPrompt = user;
   let lastError = "";
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const delays = opts.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  let delayIdx = 0;
+  for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      const text = await chatCompletion(provider, councilor.systemPrompt, user);
+      const text = await chatCompletion(provider, councilor.systemPrompt, userPrompt);
       const quality = checkQuality(text);
       if (!quality.passed) {
         lastError = `Quality gate failed: ${quality.issues.join("; ")}`;
-        continue; // retry once
+        // Format-repair retry: tell the model exactly what was missing.
+        userPrompt =
+          `${user}\n\nYour previous response was rejected for: ${quality.issues.join("; ")}. ` +
+          `Respond again with XML ONLY - no prose, no preamble, no markdown fences - using exactly these tags: ` +
+          `<forecast_answer>, <probability>, <confidence>, <reasoning>, <drivers>, <counter_signals>, <update_triggers>, <assumptions>.`;
+        continue;
       }
       return { parsed: parseOpinion(text), status: "live" };
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
-      if (attempt === 0) continue;
+      const kind = kindOfThrown(e);
+      if (kind === "deterministic" || attempt >= 3) break;
+      const wait = delays[Math.min(delayIdx++, delays.length - 1)] ?? 0;
+      if (wait > 0) await sleep(wait);
     }
   }
   return {

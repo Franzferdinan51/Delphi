@@ -307,4 +307,11 @@ export const DELPHI = {
   seed: (process.env.DELPHI_SEED || (process.env.NODE_ENV === "production" ? "false" : "true")).toLowerCase() === "true",
   /** Councilors need this many resolved forecasts before track-record weights kick in. */
   coldStartThreshold: 5,
+  /**
+   * Max parallel councilor requests per deliberation round. Local inference
+   * servers get flaky under full parallel load (LM Studio's
+   * speculative-batching engine bug), so rounds are staggered. Override with
+   * DELPHI_CONCURRENCY.
+   */
+  councilConcurrency: Math.max(1, Number(process.env.DELPHI_CONCURRENCY) || 2),
 };

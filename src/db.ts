@@ -286,6 +286,37 @@ export function getOpinions(
     .all(forecastId) as unknown as OpinionRow[];
 }
 
+/** Delete a question and all its forecasts/opinions (orphan cleanup). */
+export function deleteQuestion(d: DatabaseSync, id: string): void {
+  d.exec("SAVEPOINT delphi_delq");
+  try {
+    d.prepare(`DELETE FROM opinions WHERE question_id = ?`).run(id);
+    d.prepare(`DELETE FROM forecasts WHERE question_id = ?`).run(id);
+    d.prepare(`DELETE FROM questions WHERE id = ?`).run(id);
+    d.exec("RELEASE delphi_delq");
+  } catch (e) {
+    d.exec("ROLLBACK TO delphi_delq; RELEASE delphi_delq");
+    throw e;
+  }
+}
+
+/**
+ * Delete open questions that never produced a forecast run (left behind by
+ * crashed runs from before pipelines cleaned up after themselves).
+ * Returns the number of questions pruned.
+ */
+export function pruneOrphanQuestions(d: DatabaseSync): number {
+  const rows = d
+    .prepare(
+      `SELECT q.id AS id FROM questions q
+       LEFT JOIN forecasts f ON f.question_id = q.id
+       WHERE q.status = 'open' AND f.id IS NULL`,
+    )
+    .all() as Array<{ id: string }>;
+  for (const r of rows) deleteQuestion(d, r.id);
+  return rows.length;
+}
+
 /** Per-councilor resolved track record: { n, sumSqErr, sumLogScore }. */
 export function councilorTrackRecords(
   d: DatabaseSync,

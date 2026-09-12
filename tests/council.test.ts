@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { checkQuality, parseOpinion } from "../src/quality.js";
-import { selectCouncilors, COUNCILORS } from "../src/council.js";
+import { selectCouncilors, COUNCILORS, buildCriticPrompt } from "../src/council.js";
 
 describe("checkQuality", () => {
   const good = `<probability>67</probability><confidence>Medium</confidence>
@@ -73,5 +73,25 @@ describe("selectCouncilors", () => {
   it("scores energy/geopolitics questions onto the domain expert", () => {
     const picked = selectCouncilors("Will a confirmed Saudi Petroline outage last through Friday?", "Iran Houthis Hormuz oil", 4);
     expect(picked.map((c) => c.id)).toContain("domain-expert");
+  });
+});
+
+describe("buildCriticPrompt", () => {
+  const brief = { question: "Will X happen?", questionType: "binary", deadline: "2027-01-01" };
+  const peers = [{ name: "Skeptic", probability: 30, reasoning: "Base rates are low." }];
+  it("names the councilor's own round-1 estimate when it exists", () => {
+    const prompt = buildCriticPrompt(COUNCILORS[0], brief, 62, peers);
+    expect(prompt).toContain("initial forecast of 62%");
+  });
+  it("is explicit when the councilor's round-1 opinion errored (no fake 50%)", () => {
+    const prompt = buildCriticPrompt(COUNCILORS[0], brief, undefined, peers);
+    expect(prompt).toContain("round-1 forecast failed");
+    expect(prompt).not.toContain("initial forecast of");
+    expect(prompt).not.toMatch(/forecast of 50%/);
+  });
+  it("never shows errored peers' placeholder probabilities", () => {
+    // peers are pre-filtered by the pipeline; the prompt just renders them
+    const prompt = buildCriticPrompt(COUNCILORS[0], brief, 62, []);
+    expect(prompt).toContain("other councilors' independent reasoning");
   });
 });

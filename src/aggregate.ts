@@ -129,3 +129,19 @@ export function confidenceRange(
     Math.min(100, probability + half),
   ];
 }
+
+/**
+ * Cap the spread-based confidence label when the council is degraded.
+ * A tight spread among the surviving councilors must not read as a
+ * full-council consensus: any errored councilor knocks "High" down to
+ * "Medium", and fewer than three usable opinions is always "Low".
+ */
+export function capConfidenceForParticipation(
+  label: "High" | "Medium" | "Low",
+  usable: number,
+  total: number,
+): "High" | "Medium" | "Low" {
+  if (usable < 3) return "Low";
+  if (usable < total) return label === "High" ? "Medium" : label;
+  return label;
+}

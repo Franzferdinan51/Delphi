@@ -197,7 +197,7 @@ export function buildBriefPrompt(
 export function buildCriticPrompt(
   councilor: CouncilorDef,
   brief: { question: string; questionType: string; deadline: string },
-  ownProbability: number,
+  ownProbability: number | undefined,
   peers: Array<{ name: string; probability: number; reasoning: string }>,
 ): string {
   const peerText = peers
@@ -207,7 +207,9 @@ export function buildCriticPrompt(
     )
     .join("\n\n");
   return [
-    `You gave an initial forecast of ${ownProbability}% on: "${brief.question.trim()}" (deadline ${brief.deadline}).`,
+    ownProbability === undefined
+      ? `Your round-1 forecast failed, so you have no prior estimate of your own — judge the question fresh on: "${brief.question.trim()}" (deadline ${brief.deadline}).`
+      : `You gave an initial forecast of ${ownProbability}% on: "${brief.question.trim()}" (deadline ${brief.deadline}).`,
     `Now you see the other councilors' independent reasoning:\n\n${peerText}`,
     [
       "Critique phase. Stay in your persona.",

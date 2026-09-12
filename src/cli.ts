@@ -9,7 +9,7 @@
  *   delphi show <id>
  */
 import type { DatabaseSync } from "node:sqlite";
-import { getDb, getQuestion, listQuestions, getForecasts, getOpinions, councilorTrackRecords, providerTrackRecords } from "./db.js";
+import { getDb, getQuestion, listQuestions, getForecasts, getOpinions, councilorTrackRecords, providerTrackRecords, pruneOrphanQuestions } from "./db.js";
 import { runPipeline } from "./pipeline.js";
 import { resolveForecast } from "./resolve.js";
 import { seedIfEmpty } from "./seed.js";
@@ -28,11 +28,12 @@ Usage:
   delphi leaderboard
   delphi list
   delphi show <id>
+  delphi prune                       (delete open questions that never produced a forecast)
   delphi providers                    (provider status + live model catalogs)
   delphi models <provider>            (list models pulled from the provider's API)
   delphi set-model <provider> <model> (choose a provider's model)
 
-Env: DELPHI_DEMO (default true), DELPHI_DB, DELPHI_PORT,
+Env: DELPHI_DEMO (default true), DELPHI_DB, DELPHI_PORT, DELPHI_CONCURRENCY (council parallelism, default 2),
      LMSTUDIO_URL, MINIMAX_API_KEY, XAI_API_KEY, OPENAI_API_KEY,
      SEARXNG_URL, TAVILY_API_KEY, BRAVE_API_KEY`);
   process.exit(1);
@@ -105,7 +106,7 @@ async function cmdAsk(db: DatabaseSync, args: Args): Promise<void> {
         else if (e.type === "opinion") {
           const o = e.opinion;
           console.log(
-            `  [${o.round === 1 ? "R1" : "R2"}] ${o.councilorName} (${o.providerName}): ${o.probability}% — ${o.confidence}`,
+            `  [${o.round === 1 ? "R1" : "R2"}] ${o.councilorName} (${o.providerName}): ${o.probability}% — ${o.confidence}${o.status === "error" ? " ⚠ error" : ""}`,
           );
         } else if (e.type === "research" && e.results.length) {
           console.log(`  🔎 "${e.query}" → ${e.results.length} results`);
@@ -152,6 +153,11 @@ function cmdResolve(db: DatabaseSync, args: Args): void {
     );
   }
   console.log();
+}
+
+function cmdPrune(db: DatabaseSync): void {
+  const n = pruneOrphanQuestions(db);
+  console.log(n ? `Pruned ${n} orphan question(s) with no forecast runs.` : "No orphan questions found.");
 }
 
 function cmdLeaderboard(db: DatabaseSync): void {
@@ -294,6 +300,7 @@ async function main(): Promise<void> {
     case "leaderboard": cmdLeaderboard(db); break;
     case "list": cmdList(db); break;
     case "show": cmdShow(db, args); break;
+    case "prune": cmdPrune(db); break;
     case "providers": await cmdProviders(); break;
     case "models": await cmdModels(args); break;
     case "set-model": await cmdSetModel(args); break;

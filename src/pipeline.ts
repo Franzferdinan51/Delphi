@@ -33,10 +33,12 @@ import {
   nextRunNumber,
   councilorTrackRecords,
   updateQuestionGate,
+  deleteQuestion,
+  getForecasts,
 } from "./db.js";
 import { defaultProviders, resolveProviders, providerById, assignProviderId, DELPHI, isProviderUsable } from "./config.js";
 import { COUNCILORS, selectCouncilors } from "./council.js";
-import { askLive, demoOpinion, type BriefInput } from "./providers.js";
+import { askLive, demoOpinion, mapWithConcurrency, type BriefInput } from "./providers.js";
 import { buildQueries, runQuery, researchNotes } from "./research.js";
 import { collectPriors, blendPriors, priorsNotes, emptyPriors } from "./priors.js";
 import { sharpenQuestion, decompositionNotes, type GateResult } from "./question-gate.js";
@@ -45,6 +47,7 @@ import {
   aggregate,
   confidenceFromSpread,
   confidenceRange,
+  capConfidenceForParticipation,
 } from "./aggregate.js";
 
 export type Emit = (e: PipelineEvent) => void;
@@ -117,6 +120,8 @@ export interface PipelineDeps {
   db?: DatabaseSync;
   providers?: ProviderConfig[];
   emit?: Emit;
+  /** Backoff (ms) between transient-error retries. Defaults to askLive's [2000, 6000, 15000]. */
+  retryDelaysMs?: number[];
 }
 
 /**
@@ -130,6 +135,7 @@ export async function runPipeline(
   input = parseAskInput(input);
   const db = deps.db || getDb();
   const emit: Emit = deps.emit || (() => undefined);
+  const retryDelaysMs = deps.retryDelaysMs;
   const demoMode = input.demoMode ?? DELPHI.demoDefault;
   const councilSize = input.councilSize ?? 4;
 
@@ -190,6 +196,23 @@ export async function runPipeline(
     })),
   });
 
+  try {
+    return await runForecastPhases();
+  } catch (e) {
+    // Never leave orphan question rows behind: if the run died before
+    // storing any forecast, remove the question created at intake.
+    // (Crashed runs used to pile up as probability-less rows in `delphi list`.)
+    if (!input.existingQuestionId) {
+      try {
+        if (getForecasts(db, questionId).length === 0) deleteQuestion(db, questionId);
+      } catch {
+        /* best effort — the original error is what matters */
+      }
+    }
+    throw e;
+  }
+
+  async function runForecastPhases(): Promise<ForecastPayload> {
   // ── 0. Question gate: sharpen, decompose, flag ambiguities ──────────
   emit({ type: "phase", phase: "gate" });
   const anchorProvider = liveProviders[0] ?? null;
@@ -269,10 +292,13 @@ export async function runPipeline(
     decompositionNotes: decompositionNotes(gate),
   };
 
-  // ── 3. Deliberation, round 1 (independent) ─────────────────────────────
+  // ── 3. Deliberation, round 1 (independent; bounded concurrency — local
+  // inference servers get flaky under full parallel load) ──────────────
   emit({ type: "phase", phase: "deliberation" });
-  const round1 = await Promise.all(
-    councilors.map(async (c, i) => {
+  const round1 = await mapWithConcurrency(
+    councilors,
+    DELPHI.councilConcurrency,
+    async (c, i) => {
       const provider = providerById(providers, providerIdFor(c.id, i));
       const useLive = !demoMode && liveProviders.some((p) => p.id === provider.id);
       if (demoMode) {
@@ -297,9 +323,9 @@ export async function runPipeline(
           error: `${provider.name} ${!provider.connected ? "not connected" : "has no model selected"}; no live forecast.` as string | undefined,
         };
       }
-      const live = await askLive(provider, c, brief);
+      const live = await askLive(provider, c, brief, undefined, { retryDelaysMs });
       return { councilor: c, provider, parsed: live.parsed, status: live.status, error: live.error };
-    }),
+    },
   );
 
   const toOpinion = (
@@ -333,15 +359,24 @@ export async function runPipeline(
   const opinionsR1 = round1.map((r) => toOpinion(r, 1));
   for (const o of opinionsR1) emit({ type: "opinion", opinion: o });
 
-  // ── 4. Critic round 2 (see peers, may update) ─────────────────────────
+  // ── 4. Critic round 2 (see peers, may update; bounded concurrency) ──
   emit({ type: "phase", phase: "critic" });
-  const round1Mean =
-    opinionsR1.reduce((s, o) => s + o.probability, 0) / opinionsR1.length;
-  const round2 = await Promise.all(
-    councilors.map(async (c, i) => {
+  // Round-1 mean over usable opinions only. When round 1 produced nothing
+  // usable, fall back to an explicit 50 (no information) — round 2 will
+  // almost surely fail too and the run aborts before publishing.
+  const usableR1 = opinionsR1.filter((o) => o.status !== "error");
+  const round1Mean = usableR1.length
+    ? usableR1.reduce((s, o) => s + o.probability, 0) / usableR1.length
+    : 50;
+  const round2 = await mapWithConcurrency(
+    councilors,
+    DELPHI.councilConcurrency,
+    async (c, i) => {
       const provider = providerById(providers, providerIdFor(c.id, i));
+      // Peers are usable round-1 opinions only: errored opinions carry a
+      // fake 50% placeholder and must never anchor the critic round.
       const peers = opinionsR1
-        .filter((o) => o.councilorId !== c.id)
+        .filter((o) => o.councilorId !== c.id && o.status !== "error")
         .map((o) => ({ name: o.councilorName, probability: o.probability, reasoning: o.reasoning }));
       if (demoMode) {
         const parsed = demoOpinion(c, questionText, questionType, 2, round1Mean);
@@ -352,12 +387,15 @@ export async function runPipeline(
         const r1 = round1[i];
         return { councilor: c, provider, parsed: r1.parsed, status: "error" as const, error: r1.error };
       }
+      // Never pass the fake 50% placeholder of a failed round-1 opinion as
+      // the councilor's own estimate — pass undefined so the critic prompt
+      // says so explicitly.
       const live = await askLive(provider, c, brief, {
-        ownProbability: opinionsR1[i].probability,
+        ownProbability: opinionsR1[i].status === "error" ? undefined : opinionsR1[i].probability,
         peers,
-      });
+      }, { retryDelaysMs });
       return { councilor: c, provider, parsed: live.parsed, status: live.status, error: live.error };
-    }),
+    },
   );
   const opinionsR2 = round2.map((r) => toOpinion(r, 2));
   for (const o of opinionsR2) emit({ type: "opinion", opinion: o });
@@ -388,7 +426,11 @@ export async function runPipeline(
   }
 
   const answer = centralAnswer(pool, questionType);
-  const confidence = confidenceFromSpread(pool.map((o) => o.probability));
+  const spreadConfidence = confidenceFromSpread(pool.map((o) => o.probability));
+  // A tight spread among survivors is not a full-council consensus: cap the
+  // label when councilors errored out (any errors knock "High" to "Medium";
+  // fewer than three usable opinions is always "Low").
+  const confidence = capConfidenceForParticipation(spreadConfidence, pool.length, councilors.length);
   const [clo, chi] = confidenceRange(probability, confidence);
   const readout = buildReadout(pool, probability, deadline, questionType, answer);
 
@@ -406,11 +448,17 @@ export async function runPipeline(
     priorDistance: blendedPrior == null ? null : Math.abs(probability - blendedPrior),
     researchResults: researchCount,
     resolvedTotal,
+    usableCouncilors: pool.length,
+    councilSize: councilors.length,
   });
+  const errored = councilors.length - pool.length;
+  const errNote = errored
+    ? ` ${errored} of ${councilors.length} councilors errored and were excluded.`
+    : "";
   const summary =
     questionType === "binary"
-      ? `${probability}% aggregate likelihood before ${deadline}. Council confidence is ${confidence.toLowerCase()}; round-2 estimates span ${spread} points.`
-      : `${probability}% confidence in the central forecast: ${answer}. Council confidence is ${confidence.toLowerCase()}; round-2 estimates span ${spread} points.`;
+      ? `${probability}% aggregate likelihood before ${deadline}. Council confidence is ${confidence.toLowerCase()}; round-2 estimates span ${spread} points.${errNote}`
+      : `${probability}% confidence in the central forecast: ${answer}. Council confidence is ${confidence.toLowerCase()}; round-2 estimates span ${spread} points.${errNote}`;
 
   // ── 6. Output + store ─────────────────────────────────────────────────
   const runNumber = nextRunNumber(db, questionId);
@@ -498,6 +546,7 @@ export async function runPipeline(
   emit({ type: "phase", phase: "done" });
   emit({ type: "result", forecast });
   return forecast;
+  }
 }
 
 export { COUNCILORS };

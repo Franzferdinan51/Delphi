@@ -22,6 +22,10 @@ export interface ConfidenceInputs {
   researchResults: number;
   /** total resolved forecasts across the council (for weight credibility) */
   resolvedTotal: number;
+  /** usable (non-error) round-2 opinions */
+  usableCouncilors: number;
+  /** councilors asked */
+  councilSize: number;
 }
 
 export interface ConfidenceBreakdown {
@@ -34,9 +38,12 @@ export interface ConfidenceBreakdown {
 const clamp = (v: number): number => Math.max(0, Math.min(100, Math.round(v)));
 
 export function confidenceBreakdown(i: ConfidenceInputs): ConfidenceBreakdown {
+  const participation = i.councilSize > 0 ? i.usableCouncilors / i.councilSize : 1;
   return {
     // Tight council consensus → high. A 55-point spread means no agreement.
-    agreement: clamp(100 - Math.max(0, i.spread) * 1.8),
+    // Scaled by participation: agreement among half the council is not a
+    // full-council consensus.
+    agreement: clamp((100 - Math.max(0, i.spread) * 1.8) * participation),
     // Small moves from the outside view → the evidence confirmed the priors.
     // No priors → neutral 60 rather than penalizing.
     priorConvergence:

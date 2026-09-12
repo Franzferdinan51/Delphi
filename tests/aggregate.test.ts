@@ -5,6 +5,7 @@ import {
   extremize,
   aggregate,
   confidenceFromSpread,
+  capConfidenceForParticipation,
   weightedMedian,
   logit,
   sigmoid,
@@ -94,6 +95,25 @@ describe("confidenceFromSpread", () => {
     expect(confidenceFromSpread([60, 64, 68])).toBe("High");
     expect(confidenceFromSpread([60, 70, 75])).toBe("Medium");
     expect(confidenceFromSpread([30, 60, 90])).toBe("Low");
+  });
+});
+
+describe("capConfidenceForParticipation", () => {
+  it("keeps the label when the full council participated", () => {
+    expect(capConfidenceForParticipation("High", 4, 4)).toBe("High");
+    expect(capConfidenceForParticipation("Medium", 4, 4)).toBe("Medium");
+    expect(capConfidenceForParticipation("Low", 4, 4)).toBe("Low");
+  });
+  it("knocks High down to Medium when any councilor errored", () => {
+    expect(capConfidenceForParticipation("High", 3, 4)).toBe("Medium");
+    expect(capConfidenceForParticipation("Medium", 3, 4)).toBe("Medium");
+    expect(capConfidenceForParticipation("Low", 3, 4)).toBe("Low");
+  });
+  it("forces Low with fewer than three usable opinions", () => {
+    expect(capConfidenceForParticipation("High", 2, 4)).toBe("Low");
+    expect(capConfidenceForParticipation("Medium", 2, 4)).toBe("Low");
+    expect(capConfidenceForParticipation("High", 1, 4)).toBe("Low");
+    expect(capConfidenceForParticipation("High", 0, 4)).toBe("Low");
   });
 });
 
