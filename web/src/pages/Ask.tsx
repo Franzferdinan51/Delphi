@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { askStream } from "../api";
+import { askStream, getHealth } from "../api";
 import type {
   AskRequest,
   Councilor,
@@ -58,7 +58,7 @@ export function Ask() {
   const [deadline, setDeadline] = useState(defaultDeadline);
   const [resolutionCriteria, setResolutionCriteria] = useState("");
   const [context, setContext] = useState("");
-  const [demoMode, setDemoMode] = useState(true);
+  const [demoMode, setDemoMode] = useState(false);
   const [councilSize, setCouncilSize] = useState<3 | 4 | 5>(5);
 
   const [runState, setRunState] = useState<RunState>("idle");
@@ -71,6 +71,12 @@ export function Ask() {
 
   const abortRef = useRef<AbortController | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    getHealth()
+      .then((h) => setDemoMode(Boolean(h.demoMode)))
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     return () => abortRef.current?.abort();

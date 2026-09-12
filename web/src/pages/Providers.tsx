@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getProviders, setProviderModel } from "../api";
+import { getProviders, setProviderModel, getCouncilors, setCouncilorProvider } from "../api";
 import { useApi } from "../hooks";
 import { EmptyState, ApiError, LoadingCard } from "../components/ui";
 import type { ProviderInfo } from "../types";
@@ -81,7 +81,19 @@ function ProviderCard({ provider, onSaved }: { provider: ProviderInfo; onSaved: 
 
 export function Providers() {
   const { data, loading, error, retry } = useApi(getProviders);
+  const councilors = useApi(getCouncilors);
   const providers = data?.providers ?? [];
+  const [assigning, setAssigning] = useState("");
+
+  async function assign(councilorId: string, provider: string) {
+    setAssigning(councilorId);
+    try {
+      await setCouncilorProvider(councilorId, provider);
+      councilors.retry();
+    } finally {
+      setAssigning("");
+    }
+  }
 
   return (
     <div className="page">
@@ -90,8 +102,9 @@ export function Providers() {
           Model <span className="accent">Providers</span>
         </h1>
         <p>
-          Model lists are pulled live from each provider&apos;s <code>/models</code> API — nothing is
-          hardcoded. Pick a model per provider; Delphi remembers your choice.
+          Personas are not glued to a vendor. With one live provider, every councilor uses it.
+          With several, they round-robin unless you pin a persona below. Model lists come from
+          each provider&apos;s live <code>/models</code> catalog.
         </p>
       </div>
 
@@ -113,6 +126,35 @@ export function Providers() {
           {providers.map((p) => (
             <ProviderCard key={p.id} provider={p} onSaved={retry} />
           ))}
+        </div>
+      )}
+
+      {councilors.data && (
+        <div className="page-head" style={{ marginTop: 36 }}>
+          <h2>Persona routing</h2>
+          <p className="muted">Leave on Auto unless you want a specific councilor on a specific provider.</p>
+          <div className="card card-pad" style={{ marginTop: 12 }}>
+            {councilors.data.councilors.map((c) => (
+              <div key={c.id} style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <strong>{c.name}</strong>
+                  <div className="muted" style={{ fontSize: 12 }}>{c.tagline}</div>
+                </div>
+                <select
+                  className="input"
+                  style={{ maxWidth: 220 }}
+                  value={c.provider === "auto" ? "" : c.provider}
+                  disabled={assigning === c.id}
+                  onChange={(e) => assign(c.id, e.target.value)}
+                >
+                  <option value="">Auto</option>
+                  {providers.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -33,8 +33,11 @@ import {
   resolveQuestionView,
   forecastPayload,
   providersView,
+  councilorsView,
 } from "./service.js";
-import { DELPHI, VERSION, defaultProviders, resolveProviders, writeModelChoice } from "./config.js";
+import { DELPHI, VERSION, defaultProviders, resolveProviders, writeModelChoice, writeCouncilorProvider } from "./config.js";
+import { COUNCILORS } from "./council.js";
+import { authorize, configuredApiKey, isLoopbackHost } from "./auth.js";
 import type {
   AskInput,
   PipelineEvent,
@@ -189,6 +192,9 @@ export function createServer(db?: DatabaseSync): http.Server {
         res.setHeader("Vary", "Origin");
       }
       res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("X-Frame-Options", "DENY");
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.setHeader("Cache-Control", "no-store");
       if (req.method === "OPTIONS") {
         res.writeHead(204, {
           "Access-Control-Allow-Headers": "Content-Type, Authorization",
@@ -199,6 +205,7 @@ export function createServer(db?: DatabaseSync): http.Server {
       }
       // ── MCP: Streamable HTTP (stateless JSON-RPC) ──────────────────────────
       if (url.pathname === "/mcp") {
+        if (!authorize(req)) return json(res, 401, { error: "Authorization required. Send Authorization: Bearer <DELPHI_API_KEY>." });
         if (req.method === "POST") {
           const payload = await body(req);
           return await handleMcpRequest(database, req, res, payload);
@@ -219,6 +226,9 @@ export function createServer(db?: DatabaseSync): http.Server {
         return;
       }
       if (url.pathname === "/api/health" && req.method === "GET") return await handleHealth(res);
+      if ((url.pathname.startsWith("/api/") || url.pathname === "/mcp") && !authorize(req)) {
+        return json(res, 401, { error: "Authorization required. Send Authorization: Bearer <DELPHI_API_KEY>." });
+      }
       if (url.pathname === "/api/ask" && req.method === "POST") {
         const payload = await body(req);
         return handleAsk(database, req, res, payload);
@@ -247,6 +257,20 @@ export function createServer(db?: DatabaseSync): http.Server {
         return json(res, 200, calibrationView(database));
       if (url.pathname === "/api/providers" && req.method === "GET")
         return json(res, 200, { ok: true, providers: (await providersView()).providers });
+      if (url.pathname === "/api/councilors" && req.method === "GET")
+        return json(res, 200, councilorsView());
+      const councilorMatch = /^\/api\/councilors\/([^/]+)\/provider$/.exec(url.pathname);
+      if (councilorMatch && req.method === "POST") {
+        const payload = await body(req);
+        const id = decodeURIComponent(councilorMatch[1]);
+        if (!COUNCILORS.some((c) => c.id === id)) return json(res, 404, { error: `Unknown councilor: ${id}` });
+        const providerId = str(payload["provider"]).trim();
+        if (providerId && !defaultProviders().some((p) => p.id === providerId)) {
+          return json(res, 400, { error: `Unknown provider: ${providerId}` });
+        }
+        writeCouncilorProvider(id, providerId);
+        return json(res, 200, { ok: true, councilorId: id, provider: providerId || "auto" });
+      }
       const modelMatch = /^\/api\/providers\/([^/]+)\/model$/.exec(url.pathname);
       if (modelMatch && req.method === "POST") {
         const payload = await body(req);
@@ -263,9 +287,18 @@ export function createServer(db?: DatabaseSync): http.Server {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  if (!isLoopbackHost(DELPHI.host) && !configuredApiKey()) {
+    console.error("Refusing to bind a non-loopback address without DELPHI_API_KEY.");
+    process.exit(1);
+  }
   const server = createServer();
   server.listen(DELPHI.port, DELPHI.host, () => {
-    console.log(`🔮 Delphi API on http://${DELPHI.host}:${DELPHI.port} (v${VERSION})`);
-    console.log(`   MCP (Streamable HTTP): http://${DELPHI.host}:${DELPHI.port}/mcp`);
+    const mode = DELPHI.demoDefault ? "demo" : "live";
+    console.log(`Delphi API on http://${DELPHI.host}:${DELPHI.port} (v${VERSION}, ${mode})`);
+    console.log(`   MCP: http://${DELPHI.host}:${DELPHI.port}/mcp`);
+    if (configuredApiKey()) console.log("   Auth: Bearer DELPHI_API_KEY required on /api and /mcp (health is public).");
   });
+  const shutdown = () => server.close(() => process.exit(0));
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }

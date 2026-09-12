@@ -45,7 +45,7 @@ export interface CouncilorDef {
   systemPrompt: string;
   /** Keywords used for topic-relevance selection. */
   topics: string[];
-  /** Preferred provider for this persona. */
+  /** Preferred provider for this persona. Empty = auto (first usable / round-robin). */
   provider: ProviderId;
 }
 

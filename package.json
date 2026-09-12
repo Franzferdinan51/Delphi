@@ -1,6 +1,6 @@
 {
   "name": "delphi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Delphi — council-based prediction engine",
   "main": "index.js",
   "directories": {
@@ -9,9 +9,9 @@
   "scripts": {
     "test": "vitest run",
     "dev": "npm --prefix web run dev",
-    "dev:api": "tsx src/api.ts",
+    "dev:api": "DELPHI_DEMO=true DELPHI_SEED=true tsx src/api.ts",
     "build": "tsc && npm --prefix web run build",
-    "start": "node dist/api.js",
+    "start": "NODE_ENV=production node dist/api.js",
     "test:watch": "vitest"
   },
   "keywords": [],

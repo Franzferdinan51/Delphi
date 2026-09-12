@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useHashRoute } from "./hooks";
-import { getHealth } from "./api";
+import { getHealth, getStoredApiKey, setStoredApiKey } from "./api";
 import type { Health } from "./types";
 import { Ask } from "./pages/Ask";
 import { Questions } from "./pages/Questions";
@@ -60,9 +60,20 @@ function TopBar() {
         <div className="health-pill" title={health ? `v${health.version}` : "backend unreachable"}>
           <span className={`health-dot${health ? "" : " down"}`} />
           {health
-            ? `${connectedProviders}/${health.providers.length} providers${health.demoMode ? " · demo" : ""}`
+            ? `${connectedProviders}/${health.providers.length} providers${health.demoMode ? " · demo" : " · live"}`
             : "api down"}
         </div>
+        {health?.authRequired && (
+          <input
+            className="input"
+            type="password"
+            placeholder="API key"
+            defaultValue={getStoredApiKey()}
+            onBlur={(e) => setStoredApiKey(e.target.value)}
+            style={{ width: 140, height: 32, fontSize: 12 }}
+            aria-label="Delphi API key"
+          />
+        )}
       </div>
     </header>
   );

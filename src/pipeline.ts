@@ -34,7 +34,7 @@ import {
   councilorTrackRecords,
   updateQuestionGate,
 } from "./db.js";
-import { defaultProviders, resolveProviders, providerById, councilorProviderOverrides, DELPHI, isProviderUsable } from "./config.js";
+import { defaultProviders, resolveProviders, providerById, assignProviderId, DELPHI, isProviderUsable } from "./config.js";
 import { COUNCILORS, selectCouncilors } from "./council.js";
 import { askLive, demoOpinion, type BriefInput } from "./providers.js";
 import { buildQueries, runQuery, researchNotes } from "./research.js";
@@ -136,10 +136,8 @@ export async function runPipeline(
   const configured = deps.providers || defaultProviders();
   const providers = demoMode ? configured : await resolveProviders(configured);
   const liveProviders = providers.filter(isProviderUsable);
-  // Optional per-councilor provider reassignment (custom endpoints included).
-  const providerOverrides = councilorProviderOverrides();
-  const providerIdFor = (councilorId: string, builtin: string): string =>
-    providerOverrides[councilorId] || builtin;
+  const providerIdFor = (councilorId: string, index: number): string =>
+    assignProviderId(councilorId, providers, { demoMode, index });
 
   // ── 1. Intake ──────────────────────────────────────────────────────────
   const createdAt = new Date().toISOString();
@@ -184,11 +182,11 @@ export async function runPipeline(
   emit({
     type: "started",
     questionId,
-    councilors: councilors.map((c) => ({
+    councilors: councilors.map((c, i) => ({
       id: c.id,
       name: c.name,
       tagline: c.tagline,
-      provider: c.provider,
+      provider: providerIdFor(c.id, i),
     })),
   });
 
@@ -274,8 +272,8 @@ export async function runPipeline(
   // ── 3. Deliberation, round 1 (independent) ─────────────────────────────
   emit({ type: "phase", phase: "deliberation" });
   const round1 = await Promise.all(
-    councilors.map(async (c) => {
-      const provider = providerById(providers, providerIdFor(c.id, c.provider));
+    councilors.map(async (c, i) => {
+      const provider = providerById(providers, providerIdFor(c.id, i));
       const useLive = !demoMode && liveProviders.some((p) => p.id === provider.id);
       if (demoMode) {
         const parsed = demoOpinion(c, questionText, questionType, 1);
@@ -341,7 +339,7 @@ export async function runPipeline(
     opinionsR1.reduce((s, o) => s + o.probability, 0) / opinionsR1.length;
   const round2 = await Promise.all(
     councilors.map(async (c, i) => {
-      const provider = providerById(providers, providerIdFor(c.id, c.provider));
+      const provider = providerById(providers, providerIdFor(c.id, i));
       const peers = opinionsR1
         .filter((o) => o.councilorId !== c.id)
         .map((o) => ({ name: o.councilorName, probability: o.probability, reasoning: o.reasoning }));

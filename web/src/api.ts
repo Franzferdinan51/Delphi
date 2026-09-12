@@ -10,8 +10,30 @@ import type {
   ProviderInfo,
 } from "./types";
 
+const API_KEY_STORAGE = "delphi.apiKey";
+
+export function getStoredApiKey(): string {
+  try {
+    return localStorage.getItem(API_KEY_STORAGE) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setStoredApiKey(key: string): void {
+  try {
+    if (key.trim()) localStorage.setItem(API_KEY_STORAGE, key.trim());
+    else localStorage.removeItem(API_KEY_STORAGE);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, init);
+  const headers = new Headers(init?.headers);
+  const key = getStoredApiKey();
+  if (key && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${key}`);
+  const res = await fetch(`/api${path}`, { ...init, headers });
   if (!res.ok) {
     let detail = "";
     try {
@@ -64,7 +86,11 @@ export async function askStream(
 ): Promise<void> {
   const res = await fetch("/api/ask", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      ...(getStoredApiKey() ? { Authorization: `Bearer ${getStoredApiKey()}` } : {}),
+    },
     body: JSON.stringify(body),
     signal,
   });
@@ -121,5 +147,25 @@ export function setProviderModel(id: string, model: string): Promise<ProvidersRe
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model }),
+  });
+}
+
+export interface CouncilorInfo {
+  id: string;
+  name: string;
+  tagline: string;
+  role: string;
+  provider: string;
+}
+
+export function getCouncilors(): Promise<{ councilors: CouncilorInfo[] }> {
+  return apiFetch<{ councilors: CouncilorInfo[] }>("/councilors");
+}
+
+export function setCouncilorProvider(id: string, provider: string): Promise<{ ok: boolean; provider: string }> {
+  return apiFetch(`/councilors/${encodeURIComponent(id)}/provider`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider }),
   });
 }

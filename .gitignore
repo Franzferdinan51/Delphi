@@ -5,6 +5,7 @@ web/node_modules/
 data/*.db
 data/*.db-*
 data/provider-models.json
+data/councilor-providers.json
 .env
 .env.local
 reference/

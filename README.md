@@ -9,9 +9,10 @@ Built from Ryan's [Prediction](https://github.com/Franzferdinan51/Prediction) (f
 ```bash
 cd ~/workspace/delphi
 npm install          # engine deps
-npm test             # 128 tests
-npm run dev:api      # API on http://127.0.0.1:8790 (demo mode, zero creds)
+npm test             # engine tests
+npm run dev:api      # local API with demo+seed (http://127.0.0.1:8790)
 npm run dev          # web UI (proxies /api → :8790)
+npm run build && npm start   # production: live mode, no seed, NODE_ENV=production
 ```
 
 Or production-style: `npm run build && npm start` — the API serves the built UI itself on port 8790.
@@ -26,7 +27,7 @@ npx tsx src/cli.ts leaderboard
 
 Install the CLI globally-ish: `npm run build && npm link` → `delphi ask …`.
 
-**Demo mode is on by default** (`DELPHI_DEMO=true`). Everything works with zero credentials — canned providers, canned research. Flip to live with `--live` (CLI) or `demoMode: false` (API).
+**Demo mode is for local `npm run dev:api` only.** Production (`npm start`, `NODE_ENV=production`) is live by default: no fake seed data, demo off, and a non-loopback bind requires `DELPHI_API_KEY`. Flip demo explicitly with `DELPHI_DEMO=true` or the Ask toggle.
 
 ## Going live
 
@@ -63,7 +64,7 @@ export DELPHI_COUNCILOR_PROVIDER_SKEPTIC=deepseek   # skeptic now runs on DeepSe
 
 Councilor ids: `base-rate-analyst`, `domain-expert`, `skeptic`, `superforecaster`, `quant`.
 
-Research: `SEARXNG_URL` (default `http://127.0.0.1:8080`), or `TAVILY_API_KEY` / `BRAVE_API_KEY` to use those instead. Other knobs: `DELPHI_PORT` (8790), `DELPHI_HOST`, `DELPHI_DB` (default `data/delphi.db`), `DELPHI_ALLOWED_ORIGINS` (comma-separated extra CORS origins; browsers are same-origin by default). Requires Node ≥ 22 (uses `node:sqlite`).
+Research: `SEARXNG_URL` (default `http://127.0.0.1:8080`), or `TAVILY_API_KEY` / `BRAVE_API_KEY` to use those instead. Other knobs: `DELPHI_PORT` (8790), `DELPHI_HOST`, `DELPHI_DB` (default `data/delphi.db`), `DELPHI_ALLOWED_ORIGINS` (comma-separated extra CORS origins; browsers are same-origin by default), `DELPHI_API_KEY` (Bearer auth on `/api` and `/mcp`; required if you bind a non-loopback host). Requires Node ≥ 22 (uses `node:sqlite`).
 
 ## Architecture
 
@@ -94,11 +95,12 @@ web/            Vite + React UI (built by a second agent, same contract)
 3. **Research** — budgeted web research (2 queries × 6 results), 5-minute cache, URL dedup; notes injected into every councilor's brief.
 4. **Priors** — Bayesian anchors collected *before* deliberation: the outside-view base rate for the reference class (lightweight LLM estimate) and the live implied probability from Polymarket **only when the market question text and end date match exactly**, volume ≥ $5k, and it is an active Yes/No market. Unrelated search hits are ignored. Councilors must explicitly argue for or against moving away from each anchor.
 5. **Deliberation** — 3–5 personas selected by topic relevance forecast **independently** (round 1, parallel). Each persona is a system prompt + assigned provider:
-   - **Base-Rate Analyst** — outside view, reference classes (default: LM Studio)
-   - **Domain Expert** — inside view, causal mechanisms (default: Grok)
-   - **Skeptic** — red team, steelmans the opposite (default: MiniMax)
-   - **Superforecaster** — Fermi decomposition, Bayesian updating (default: Meta Muse Spark)
-   - **Quant Modeler** — distributions, explicit numbers (default: OpenAI)
+   - **Base-Rate Analyst** — outside view, reference classes
+   - **Domain Expert** — inside view, causal mechanisms
+   - **Skeptic** — red team, steelmans the opposite
+   - **Superforecaster** — Fermi decomposition, Bayesian updating
+   - **Quant Modeler** — distributions, explicit numbers
+   Personas are **not** bound to a vendor. One live provider → everyone uses it. Several providers → round-robin unless you pin a persona in the UI (`Providers` → Persona routing), via `POST /api/councilors/:id/provider`, or `DELPHI_COUNCILOR_PROVIDER_<ID>`.
 6. **Critic** — round 2: each councilor sees peers' reasoning and may update (anchoring to the group is penalized in the prompt). Quality gate requires a 0–100 probability and a reasoning tag. Failed providers are marked `error` and excluded from the pool.
 7. **Aggregation** — logarithmic opinion pool (geometric-mean consensus), weights from each councilor's resolved Brier history, then extremization. Cold start: equal weights until 5+ resolved forecasts each. If **no** usable opinions survive, the run fails instead of publishing a fake forecast. Emits a **0–100 confidence score** (agreement, prior convergence, evidence, track-record) persisted with a per-component breakdown.
 8. **Output** — central answer, calibrated probability, full readout (thesis, drivers, counter-signals, update triggers, assumptions, best/worst case, timeline, indicators, per-councilor opinions with reasoning). Forecast writes are wrapped in a SQLite savepoint.

@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { BUILTIN_PROVIDER_IDS } from "./types.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 export const DEFAULT_PORT = 8790;
 
 /**
@@ -126,14 +126,57 @@ export function defaultProviders(): ProviderConfig[] {
   ];
 }
 
-/** Councilor → provider reassignment, e.g. DELPHI_COUNCILOR_PROVIDER_SKEPTIC=deepseek */
+/** Councilor → provider reassignment. Env wins over the saved file. Empty persona default = auto. */
 export function councilorProviderOverrides(): Record<string, string> {
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = { ...readCouncilorProviders() };
   for (const [k, v] of Object.entries(process.env)) {
     const m = /^DELPHI_COUNCILOR_PROVIDER_(.+)$/.exec(k);
     if (m && v?.trim()) out[m[1].toLowerCase().replace(/_/g, "-")] = v.trim();
   }
   return out;
+}
+
+function councilorProvidersPath(): string {
+  return process.env.DELPHI_COUNCILOR_PROVIDERS_FILE || join(dirname(DELPHI.dbPath), "councilor-providers.json");
+}
+
+export function readCouncilorProviders(): Record<string, string> {
+  try {
+    const data = JSON.parse(readFileSync(councilorProvidersPath(), "utf8")) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (typeof v === "string" && v.trim()) out[k] = v.trim();
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function writeCouncilorProvider(councilorId: string, providerId: string): void {
+  const choices = readCouncilorProviders();
+  if (providerId.trim()) choices[councilorId] = providerId.trim();
+  else delete choices[councilorId];
+  mkdirSync(dirname(councilorProvidersPath()), { recursive: true });
+  writeFileSync(councilorProvidersPath(), JSON.stringify(choices, null, 2) + "\n");
+}
+
+/** Pick a provider for a persona: saved/env pin, else round-robin across usable (or all, in demo). */
+export function assignProviderId(
+  councilorId: string,
+  providers: ProviderConfig[],
+  opts: { demoMode: boolean; index: number },
+): string {
+  const pinned = councilorProviderOverrides()[councilorId];
+  const pool = opts.demoMode ? providers : providers.filter(isProviderUsable);
+  if (pinned) {
+    const hit = pool.find((p) => p.id === pinned) || providers.find((p) => p.id === pinned);
+    if (hit) return hit.id;
+  }
+  if (!pool.length) {
+    throw new Error("No usable providers. Connect one provider and pick a model, or run with demo mode.");
+  }
+  return pool[opts.index % pool.length].id;
 }
 
 /**
@@ -257,8 +300,11 @@ export const DELPHI = {
   dbPath:
     process.env.DELPHI_DB ||
     new URL("../data/delphi.db", import.meta.url).pathname,
-  /** Demo mode works with zero credentials. */
-  demoDefault: (process.env.DELPHI_DEMO || "true").toLowerCase() !== "false",
+  production: process.env.NODE_ENV === "production",
+  /** Live forecasts are the default in production. Local/dev still demo unless DELPHI_DEMO=false. */
+  demoDefault: (process.env.DELPHI_DEMO || (process.env.NODE_ENV === "production" ? "false" : "true")).toLowerCase() !== "false",
+  /** Fake resolved examples — off in production unless DELPHI_SEED=true. */
+  seed: (process.env.DELPHI_SEED || (process.env.NODE_ENV === "production" ? "false" : "true")).toLowerCase() === "true",
   /** Councilors need this many resolved forecasts before track-record weights kick in. */
   coldStartThreshold: 5,
 };

@@ -27,7 +27,7 @@ You are not a pundit. If you cannot name a reference class, say so and widen the
       "election", "vote", "poll", "market", "stock", "recession", "startup", "product", "launch",
       "sports", "war", "conflict", "default", "ipo", "merger", "treaty", "ceasefire",
     ],
-    provider: "lmstudio",
+    provider: "",
   },
   {
     id: "domain-expert",
@@ -53,7 +53,7 @@ Be concrete. No "the situation is fluid." If you lack domain facts, say so and l
       "oil", "brent", "pipeline", "aramco", "hormuz", "iran", "saudi", "houthi", "yemen",
       "energy", "diesel", "gas", "lng", "opec", "tanker", "strait",
     ],
-    provider: "grok",
+    provider: "",
   },
   {
     id: "skeptic",
@@ -71,7 +71,7 @@ Method:
 
 Your probability should move because of a crack in the case, not because you enjoy being the no-vote.`,
     topics: [],
-    provider: "minimax",
+    provider: "",
   },
   {
     id: "superforecaster",
@@ -90,7 +90,7 @@ Method:
 
 Show work. Precision of reasoning beats rhetorical confidence.`,
     topics: [],
-    provider: "meta",
+    provider: "",
   },
   {
     id: "quant",
@@ -111,7 +111,7 @@ Numbers first. If a driver cannot be quantified, say the weight you are still gi
       "market", "stock", "price", "odds", "poll", "statistic", "data", "forecast", "gdp", "rate",
       "brent", "wti", "oil", "volume", "bbl", "yield", "spread", "nav",
     ],
-    provider: "openai",
+    provider: "",
   },
 ];
 

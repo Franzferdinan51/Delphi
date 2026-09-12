@@ -15,6 +15,7 @@ import {
 } from "./db.js";
 import { COUNCILORS } from "./council.js";
 import { aggregate, confidenceFromSpread } from "./aggregate.js";
+import { DELPHI } from "./config.js";
 
 interface SeedOpinion {
   councilor: string;
@@ -101,6 +102,7 @@ const REASONINGS: Record<string, string> = {
 };
 
 export function seedIfEmpty(db: DatabaseSync = getDb()): boolean {
+  if (!DELPHI.seed) return false;
   if (listQuestions(db).length > 0) return false;
   for (const s of SEEDS) {
     const qid = randomUUID();
@@ -159,7 +161,7 @@ export function seedIfEmpty(db: DatabaseSync = getDb()): boolean {
         forecast_id: fid,
         question_id: qid,
         councilor_id: o.councilor,
-        provider_id: c.provider,
+        provider_id: c.provider || "auto",
         round: 2,
         probability: o.p,
         confidence: "Medium",

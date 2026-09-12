@@ -14,7 +14,8 @@ import {
 } from "./db.js";
 import { resolveForecast } from "./resolve.js";
 import { COUNCILORS, councilorById } from "./council.js";
-import { defaultProviders, resolveProviders, DELPHI, VERSION } from "./config.js";
+import { defaultProviders, resolveProviders, DELPHI, VERSION, councilorProviderOverrides } from "./config.js";
+import { configuredApiKey } from "./auth.js";
 import { brierScore, calibrationBuckets } from "./scoring.js";
 import type {
   CouncilorOpinion,
@@ -251,6 +252,7 @@ export function resolveQuestionView(db: DatabaseSync, id: string, outcome: strin
 }
 
 export function councilorsView() {
+  const assigned = councilorProviderOverrides();
   return {
     councilors: COUNCILORS.map((c) => ({
       id: c.id,
@@ -258,7 +260,7 @@ export function councilorsView() {
       tagline: c.tagline,
       role: c.role,
       topics: c.topics,
-      provider: c.provider,
+      provider: assigned[c.id] || c.provider || "auto",
     })),
   };
 }
@@ -268,6 +270,8 @@ export async function providersView() {
   return {
     version: VERSION,
     demoMode: DELPHI.demoDefault,
+    production: DELPHI.production,
+    authRequired: Boolean(configuredApiKey()),
     providers: providers.map((p) => ({
       id: p.id,
       name: p.name,

@@ -16,6 +16,8 @@ export interface Health {
   ok: boolean;
   version: string;
   demoMode: boolean;
+  production?: boolean;
+  authRequired?: boolean;
   providers: ProviderInfo[];
 }
 

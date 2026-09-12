@@ -56,6 +56,15 @@ describe("HTTP boundaries", () => {
     const response = await post("{}", { Origin: "https://untrusted.example" });
     expect(response.status).toBe(403);
   });
+  it("requires a bearer token when DELPHI_API_KEY is set", async () => {
+    vi.stubEnv("DELPHI_API_KEY", "secret-token");
+    const denied = await fetch(`${base}/api/questions`);
+    expect(denied.status).toBe(401);
+    const ok = await fetch(`${base}/api/questions`, { headers: { Authorization: "Bearer secret-token" } });
+    expect(ok.status).toBe(200);
+    const health = await fetch(`${base}/api/health`);
+    expect(health.status).toBe(200);
+  });
   it("streams the complete demo forecast after the request body ends", async () => {
     const response = await post(JSON.stringify({ question: "Will streaming complete?", questionType: "binary", deadline: "2027-01-01", demoMode: true }));
     expect(response.status).toBe(200);
