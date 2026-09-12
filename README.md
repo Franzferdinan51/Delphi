@@ -9,7 +9,7 @@ Built from Ryan's [Prediction](https://github.com/Franzferdinan51/Prediction) (f
 ```bash
 cd ~/workspace/delphi
 npm install          # engine deps
-npm test             # 126 tests
+npm test             # 128 tests
 npm run dev:api      # API on http://127.0.0.1:8790 (demo mode, zero creds)
 npm run dev          # web UI (proxies /api → :8790)
 ```
@@ -38,6 +38,7 @@ Install the CLI globally-ish: `npm run build && npm link` → `delphi ask …`.
 | OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_ENDPOINT` | |
 | NVIDIA NIM | `NVIDIA_API_KEY`, `NVIDIA_MODEL`, `NVIDIA_ENDPOINT` | API key from build.nvidia.com |
 | OpenCode Zen (free) | `OPENCODE_MODEL`, `OPENCODE_ENDPOINT` | No key needed |
+| Meta Muse Spark | `META_API_KEY` or `MODEL_API_KEY`, `META_MODEL`, `META_ENDPOINT` | Official Model API at `https://api.meta.ai/v1`. Model id comes from live `/models` — nothing hardcoded |
 
 Delphi never hardcodes model IDs. On startup it pulls each provider's live model catalog from its `/models` API. Choose models in the Providers page of the web UI, with `delphi set-model <provider> <model>`, via the `*_MODEL` env vars, or through the MCP `set_provider_model` tool. `delphi models <provider>` (or `list_provider_models`) shows what's actually available right now.
 Every provider speaks the OpenAI-compatible `/chat/completions` protocol, so LM Studio, vLLM, Ollama, or any other endpoint works by changing the URL. Demo mode stays on unless you flip it (`DELPHI_DEMO=false`).
@@ -93,11 +94,11 @@ web/            Vite + React UI (built by a second agent, same contract)
 3. **Research** — budgeted web research (2 queries × 6 results), 5-minute cache, URL dedup; notes injected into every councilor's brief.
 4. **Priors** — Bayesian anchors collected *before* deliberation: the outside-view base rate for the reference class (lightweight LLM estimate) and the live implied probability from Polymarket **only when the market question text and end date match exactly**, volume ≥ $5k, and it is an active Yes/No market. Unrelated search hits are ignored. Councilors must explicitly argue for or against moving away from each anchor.
 5. **Deliberation** — 3–5 personas selected by topic relevance forecast **independently** (round 1, parallel). Each persona is a system prompt + assigned provider:
-   - **Base-Rate Analyst** — outside view, reference classes
-   - **Domain Expert** — inside view, causal mechanisms
-   - **Skeptic** — red team, steelmans the opposite
-   - **Superforecaster** — Fermi decomposition, Bayesian updating
-   - **Quant Modeler** — distributions, explicit numbers
+   - **Base-Rate Analyst** — outside view, reference classes (default: LM Studio)
+   - **Domain Expert** — inside view, causal mechanisms (default: Grok)
+   - **Skeptic** — red team, steelmans the opposite (default: MiniMax)
+   - **Superforecaster** — Fermi decomposition, Bayesian updating (default: Meta Muse Spark)
+   - **Quant Modeler** — distributions, explicit numbers (default: OpenAI)
 6. **Critic** — round 2: each councilor sees peers' reasoning and may update (anchoring to the group is penalized in the prompt). Quality gate requires a 0–100 probability and a reasoning tag. Failed providers are marked `error` and excluded from the pool.
 7. **Aggregation** — logarithmic opinion pool (geometric-mean consensus), weights from each councilor's resolved Brier history, then extremization. Cold start: equal weights until 5+ resolved forecasts each. If **no** usable opinions survive, the run fails instead of publishing a fake forecast. Emits a **0–100 confidence score** (agreement, prior convergence, evidence, track-record) persisted with a per-component breakdown.
 8. **Output** — central answer, calibrated probability, full readout (thesis, drivers, counter-signals, update triggers, assumptions, best/worst case, timeline, indicators, per-councilor opinions with reasoning). Forecast writes are wrapped in a SQLite savepoint.

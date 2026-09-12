@@ -112,6 +112,15 @@ export function defaultProviders(): ProviderConfig[] {
       connected: false,
       availableModels: [],
     },
+    {
+      id: "meta",
+      name: "Meta Muse Spark",
+      endpoint: process.env.META_ENDPOINT || "https://api.meta.ai/v1",
+      model: process.env.META_MODEL || "",
+      apiKey: process.env.META_API_KEY || process.env.MODEL_API_KEY || "",
+      connected: false,
+      availableModels: [],
+    },
     // Arbitrary custom OpenAI-compatible endpoints (DELPHI_PROVIDERS).
     ...customProviders(),
   ];

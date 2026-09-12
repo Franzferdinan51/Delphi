@@ -1,6 +1,6 @@
 /**
  * Delphi providers — OpenAI-compatible chat completions against
- * LM Studio / MiniMax / Grok / OpenAI / NVIDIA NIM / OpenCode Zen, plus a deterministic demo mode
+ * LM Studio / MiniMax / Grok / OpenAI / NVIDIA NIM / OpenCode Zen / Meta Muse Spark, plus a deterministic demo mode
  * that needs zero credentials.
  */
 import type { CouncilorDef } from "./types.js";

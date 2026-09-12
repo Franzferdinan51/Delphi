@@ -67,4 +67,11 @@ describe("selectCouncilors", () => {
       "quant",
     ]);
   });
+  it("routes the superforecaster to Meta by default", () => {
+    expect(COUNCILORS.find((c) => c.id === "superforecaster")?.provider).toBe("meta");
+  });
+  it("scores energy/geopolitics questions onto the domain expert", () => {
+    const picked = selectCouncilors("Will a confirmed Saudi Petroline outage last through Friday?", "Iran Houthis Hormuz oil", 4);
+    expect(picked.map((c) => c.id)).toContain("domain-expert");
+  });
 });

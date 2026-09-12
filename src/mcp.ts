@@ -135,7 +135,7 @@ export function buildToolHandlers(db: DatabaseSync): ToolHandler[] {
     {
       name: "get_providers",
       description:
-        "Provider status: the six built-ins (LM Studio local default, MiniMax, Grok/xAI, OpenAI, NVIDIA NIM, OpenCode Zen free) plus any custom OpenAI-compatible endpoints from DELPHI_PROVIDERS, with connectivity and the live model catalog pulled from each provider's /models API.",
+        "Provider status: built-ins (LM Studio, MiniMax, Grok/xAI, OpenAI, NVIDIA NIM, OpenCode Zen, Meta Muse Spark) plus any custom OpenAI-compatible endpoints from DELPHI_PROVIDERS, with connectivity and the live model catalog pulled from each provider's /models API.",
       schema: {},
       handler: async () => providersView(),
     },
@@ -144,7 +144,7 @@ export function buildToolHandlers(db: DatabaseSync): ToolHandler[] {
       description:
         "Pull the live model catalog from a provider's /models API. Delphi never hardcodes model IDs -- this is how you see what a provider can run.",
       schema: {
-        id: z.string().describe("Provider id, e.g. lmstudio, minimax, grok, openai, nvidia, opencode"),
+        id: z.string().describe("Provider id, e.g. lmstudio, minimax, grok, openai, nvidia, opencode, meta"),
       },
       handler: async (args) => {
         const p = providerById(await resolveProviders(defaultProviders()), String(args.id));

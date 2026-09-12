@@ -129,7 +129,7 @@ describe("custom providers (DELPHI_PROVIDERS)", () => {
     expect(customs[0].endpoint).toBe("https://api.deepseek.com/v1");
     const all = defaultProviders();
     expect(all.map((p) => p.id)).toEqual(
-      expect.arrayContaining(["lmstudio", "minimax", "grok", "openai", "deepseek"]),
+      expect.arrayContaining(["lmstudio", "minimax", "grok", "openai", "nvidia", "opencode", "meta", "deepseek"]),
     );
   });
 

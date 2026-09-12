@@ -8,7 +8,7 @@ export type QuestionType = "binary" | "timing" | "numeric" | "categorical";
  *  registered via the DELPHI_PROVIDERS env var and get their own string id. */
 export type ProviderId = string;
 
-/** The six preconfigured providers shipped with Delphi. */
+/** The preconfigured providers shipped with Delphi. */
 export const BUILTIN_PROVIDER_IDS = [
   "lmstudio",
   "minimax",
@@ -16,6 +16,7 @@ export const BUILTIN_PROVIDER_IDS = [
   "openai",
   "nvidia",
   "opencode",
+  "meta",
 ] as const;
 export type BuiltinProviderId = (typeof BUILTIN_PROVIDER_IDS)[number];
 
