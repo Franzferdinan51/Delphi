@@ -39,7 +39,7 @@ export function resolveForecast(
        FROM opinions o
        JOIN forecasts f ON f.id = o.forecast_id
        WHERE o.question_id = ?
-         AND o.round = 2
+         AND o.round = 2 AND o.status != 'error'
          AND f.run_number = (SELECT MAX(run_number) FROM forecasts WHERE question_id = ?)`,
     )
     .all(questionId, questionId) as Array<{

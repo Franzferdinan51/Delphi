@@ -49,8 +49,9 @@ export async function chatCompletion(
     }),
   });
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`${provider.name} request failed (${res.status}): ${detail.slice(0, 200)}`);
+    // Upstream bodies may echo authorization headers or prompt content.
+    await res.body?.cancel();
+    throw new Error(`${provider.name} request failed (HTTP ${res.status}). Check provider credentials, model and quota.`);
   }
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
@@ -84,7 +85,7 @@ export async function askLive(
     try {
       const text = await chatCompletion(provider, councilor.systemPrompt, user);
       const quality = checkQuality(text);
-      if (!quality.passed && attempt === 0) {
+      if (!quality.passed) {
         lastError = `Quality gate failed: ${quality.issues.join("; ")}`;
         continue; // retry once
       }

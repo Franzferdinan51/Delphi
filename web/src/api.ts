@@ -80,24 +80,30 @@ export async function askStream(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const lines = buf.split(/\r?\n/);
-    buf = lines.pop() ?? "";
-    for (const raw of lines) {
-      const line = raw.trim();
-      if (!line || line.startsWith(":")) continue;
-      if (!line.startsWith("data:")) continue;
-      const payload = line.slice(5).trim();
-      if (!payload || payload === "[DONE]") continue;
-      try {
-        onEvent(JSON.parse(payload) as StreamEvent);
-      } catch {
-        /* ignore malformed line */
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) throw new Error("Forecast stream ended before a result was received.");
+      buf += decoder.decode(value, { stream: true });
+      let separator: RegExpExecArray | null;
+      while ((separator = /\r?\n\r?\n/.exec(buf))) {
+        const frame = buf.slice(0, separator.index);
+        buf = buf.slice(separator.index + separator[0].length);
+        const payload = frame.split(/\r?\n/).filter(line => line.startsWith("data:"))
+          .map(line => line.slice(5).replace(/^ /, "")).join("\n");
+        if (!payload || payload === "[DONE]") continue;
+        const raw = JSON.parse(payload);
+        // REST uses {type, opinion}; accept older flat events as well.
+        const event = (raw.type === "opinion" && raw.opinion
+          ? { ...raw.opinion, type: "opinion" } : raw) as StreamEvent;
+        onEvent(event);
+        if (event.type === "result" || event.type === "error") return;
       }
+      if (buf.length > 1024 * 1024) throw new Error("Forecast stream frame is too large.");
     }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 

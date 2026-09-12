@@ -56,13 +56,14 @@ export function ResultPanel({ forecast }: { forecast: Forecast }) {
                 <div className="range-tick" style={{ left: `calc(${toPct(forecast.probability)}% - 1px)` }} />
               </div>
               <div className="range-labels">
-                <span>90% interval: {Math.round(toPct(lo))}% – {Math.round(toPct(hi))}%</span>
+                <span>Heuristic range: {Math.round(toPct(lo))}% – {Math.round(toPct(hi))}%</span>
               </div>
             </div>
           </div>
         </div>
 
         {forecast.summary && <p className="result-summary">{forecast.summary}</p>}
+        <p className="muted">Confidence is a heuristic evidence/agreement score, not a calibrated probability. The range has no guaranteed coverage.</p>
       </div>
 
       <div className="readout-body">

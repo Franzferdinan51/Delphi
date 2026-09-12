@@ -9,7 +9,7 @@ Built from Ryan's [Prediction](https://github.com/Franzferdinan51/Prediction) (f
 ```bash
 cd ~/workspace/delphi
 npm install          # engine deps
-npm test             # 77 tests
+npm test             # 126 tests
 npm run dev:api      # API on http://127.0.0.1:8790 (demo mode, zero creds)
 npm run dev          # web UI (proxies /api → :8790)
 ```
@@ -76,6 +76,7 @@ src/
   aggregate.ts  Log opinion pool, track-record weights, extremization
   scoring.ts    Brier / log scores, calibration buckets, outcome parsing
   quality.ts    Response quality gates (length, tags, forbidden patterns)
+  validation.ts Shared Zod ask-input boundary (REST / CLI / MCP)
   db.ts         SQLite schema + queries (node:sqlite)
   resolve.ts    Resolution + per-councilor grading
   seed.ts       3 resolved example questions (leaderboard isn't empty)

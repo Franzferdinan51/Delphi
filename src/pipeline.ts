@@ -49,15 +49,7 @@ import {
 
 export type Emit = (e: PipelineEvent) => void;
 
-function validate(input: AskInput): void {
-  if (!input.existingQuestionId && !input.question?.trim())
-    throw new Error("Question is required.");
-  if (!["binary", "timing", "numeric", "categorical"].includes(input.questionType)) {
-    throw new Error(`Unknown question type: ${input.questionType}`);
-  }
-  if (!input.existingQuestionId && !input.deadline?.trim())
-    throw new Error("Deadline is required.");
-}
+import { parseAskInput } from "./validation.js";
 
 function centralAnswer(opinions: CouncilorOpinion[], questionType: string): string {
   const answers = opinions.map((o) => o.answer.trim()).filter(Boolean);
@@ -115,12 +107,11 @@ type OpinionExtras = {
   updateTriggers: string[];
   assumptions: string[];
 };
-const extras = new Map<string, OpinionExtras>();
-const driversOf = (o: CouncilorOpinion) => extras.get(keyOf(o))?.drivers || [];
-const counterSignalsOf = (o: CouncilorOpinion) => extras.get(keyOf(o))?.counterSignals || [];
-const updateTriggersOf = (o: CouncilorOpinion) => extras.get(keyOf(o))?.updateTriggers || [];
-const assumptionsOf = (o: CouncilorOpinion) => extras.get(keyOf(o))?.assumptions || [];
-const keyOf = (o: CouncilorOpinion) => `${o.councilorId}:${o.round}`;
+const extras = new WeakMap<CouncilorOpinion, OpinionExtras>();
+const driversOf = (o: CouncilorOpinion) => extras.get(o)?.drivers || [];
+const counterSignalsOf = (o: CouncilorOpinion) => extras.get(o)?.counterSignals || [];
+const updateTriggersOf = (o: CouncilorOpinion) => extras.get(o)?.updateTriggers || [];
+const assumptionsOf = (o: CouncilorOpinion) => extras.get(o)?.assumptions || [];
 
 export interface PipelineDeps {
   db?: DatabaseSync;
@@ -136,13 +127,14 @@ export async function runPipeline(
   input: AskInput,
   deps: PipelineDeps = {},
 ): Promise<ForecastPayload> {
-  validate(input);
+  input = parseAskInput(input);
   const db = deps.db || getDb();
   const emit: Emit = deps.emit || (() => undefined);
   const demoMode = input.demoMode ?? DELPHI.demoDefault;
   const councilSize = input.councilSize ?? 4;
 
-  const providers = await resolveProviders(deps.providers || defaultProviders());
+  const configured = deps.providers || defaultProviders();
+  const providers = demoMode ? configured : await resolveProviders(configured);
   const liveProviders = providers.filter(isProviderUsable);
   // Optional per-councilor provider reassignment (custom endpoints included).
   const providerOverrides = councilorProviderOverrides();
@@ -331,7 +323,7 @@ export async function runPipeline(
       error: r.error,
       weight: 0, // filled after aggregation
     };
-    extras.set(keyOf(opinion), {
+    extras.set(opinion, {
       drivers: r.parsed.drivers,
       counterSignals: r.parsed.counterSignals,
       updateTriggers: r.parsed.updateTriggers,
@@ -375,7 +367,8 @@ export async function runPipeline(
   // ── 5. Aggregation ────────────────────────────────────────────────────
   emit({ type: "phase", phase: "aggregation" });
   const usable = opinionsR2.filter((o) => o.status !== "error");
-  const pool = usable.length ? usable : opinionsR2; // never aggregate an empty set
+  if (!usable.length) throw new Error("No usable council opinions; no forecast was published. Check provider connectivity, model selection and quality errors.");
+  const pool = usable;
   const records = councilorTrackRecords(db);
   const briers = pool.map((o) => {
     const rec = records.get(o.councilorId);
@@ -429,6 +422,8 @@ export async function runPipeline(
     weightsMap[o.councilorId] = weights[i];
   });
 
+  db.exec("SAVEPOINT delphi_forecast");
+  try {
   insertForecast(db, {
     id: forecastId,
     question_id: questionId,
@@ -446,6 +441,7 @@ export async function runPipeline(
     readout_json: JSON.stringify(readout),
     weights_json: JSON.stringify(weightsMap),
     confidence_score: conf.score,
+    confidence_breakdown_json: JSON.stringify(conf.breakdown),
     priors_json: JSON.stringify(priors),
   });
   for (const o of opinionsR2) {
@@ -463,6 +459,12 @@ export async function runPipeline(
       status: o.status,
       created_at: new Date().toISOString(),
     });
+  }
+
+    db.exec("RELEASE delphi_forecast");
+  } catch (error) {
+    db.exec("ROLLBACK TO delphi_forecast; RELEASE delphi_forecast");
+    throw error;
   }
 
   const forecast: ForecastPayload = {
@@ -497,8 +499,6 @@ export async function runPipeline(
 
   emit({ type: "phase", phase: "done" });
   emit({ type: "result", forecast });
-  // Clear per-run extras to avoid leaking across runs in long-lived processes.
-  for (const o of [...opinionsR1, ...opinionsR2]) extras.delete(keyOf(o));
   return forecast;
 }
 

@@ -7,8 +7,8 @@ export function Calibration() {
   const { data, loading, error, retry } = useApi(getCalibration);
 
   const buckets = (data?.buckets ?? []).map((b) => ({
-    x: toPct(b.avgForecast),
-    y: toPct(b.hitRate),
+    x: toPct(b.avgForecast * 100),
+    y: toPct(b.hitRate * 100),
     n: b.n,
     label: b.label,
   }));

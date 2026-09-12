@@ -116,13 +116,16 @@ const POLY_MIN_VOLUME = 5000;
 
 interface PolyMarket {
   question?: string;
-  lastTradePrice?: string;
   volume?: string;
   outcomes?: string;
+  outcomePrices?: string;
+  active?: boolean;
+  closed?: boolean;
+  endDate?: string;
 }
 
-async function polymarketLookup(question: string, db: DatabaseSync): Promise<MarketPrior | null> {
-  const cacheKey = `poly:${createHash("sha256").update(question).digest("hex").slice(0, 32)}`;
+async function polymarketLookup(question: string, deadline: string, db: DatabaseSync): Promise<MarketPrior | null> {
+  const cacheKey = `poly:v2:${createHash("sha256").update(JSON.stringify([question, deadline])).digest("hex").slice(0, 32)}`;
   try {
     const cached = getCachedResearch(db, cacheKey, POLY_TTL_MS);
     if (cached) return JSON.parse(cached) as MarketPrior;
@@ -136,19 +139,30 @@ async function polymarketLookup(question: string, db: DatabaseSync): Promise<Mar
       { signal: AbortSignal.timeout(10000), headers: { Accept: "application/json" } },
     );
     if (!res.ok) return null;
-    const hits = (await res.json()) as Array<{
+    const hit = (await res.json()) as {
       events?: Array<{ title?: string; slug?: string; markets?: PolyMarket[] }>;
-    }>;
+    };
     let best: MarketPrior | null = null;
-    for (const hit of hits || []) {
       for (const ev of hit.events || []) {
         for (const m of ev.markets || []) {
+          // A related search hit is not necessarily the same proposition.
+          // Prefer no anchor to importing another event's probability.
+          if (!m.active || m.closed || m.question?.trim().toLowerCase() !== question.trim().toLowerCase()) continue;
+          if (m.endDate?.slice(0, 10) !== deadline) continue;
           const volume = Number(m.volume || 0);
           if (!Number.isFinite(volume) || volume < POLY_MIN_VOLUME) continue;
-          const outcomes = String(m.outcomes || "");
-          // Prefer binary Yes/No markets; lastTradePrice is the first outcome's price.
-          if (!/yes/i.test(outcomes)) continue;
-          const price = Number(m.lastTradePrice);
+          let outcomes: unknown;
+          let prices: unknown;
+          try {
+            outcomes = JSON.parse(m.outcomes || "[]");
+            prices = JSON.parse(m.outcomePrices || "[]");
+          } catch { continue; }
+          if (!Array.isArray(outcomes) || !Array.isArray(prices) || outcomes.length !== 2 || prices.length !== 2) continue;
+          const labels = outcomes.map(o => String(o).toLowerCase());
+          if (!labels.includes("yes") || !labels.includes("no")) continue;
+          const rawPrice = prices[labels.indexOf("yes")];
+          if (rawPrice == null || rawPrice === "") continue;
+          const price = Number(rawPrice);
           if (!Number.isFinite(price) || price <= 0 || price >= 1) continue;
           const candidate: MarketPrior = {
             value: clampPct(price * 100),
@@ -160,8 +174,7 @@ async function polymarketLookup(question: string, db: DatabaseSync): Promise<Mar
           if (!best || candidate.volumeUsd > best.volumeUsd) best = candidate;
         }
       }
-      if (best) break;
-    }
+
     if (best) {
       try {
         setCachedResearch(db, cacheKey, JSON.stringify(best));
@@ -193,7 +206,7 @@ export async function collectPriors(
   }
   const [baseRate, market] = await Promise.all([
     opts.provider ? liveBaseRate(opts.provider, question, deadline) : Promise.resolve(null),
-    polymarketLookup(question, opts.db),
+    polymarketLookup(question, deadline, opts.db),
   ]);
   return { baseRate, market };
 }

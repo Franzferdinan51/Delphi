@@ -22,6 +22,7 @@ import { join, extname, normalize } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "./db.js";
 import { runPipeline } from "./pipeline.js";
+import { parseAskInput } from "./validation.js";
 import { seedIfEmpty } from "./seed.js";
 import { handleMcpRequest } from "./mcp.js";
 import {
@@ -45,7 +46,6 @@ const MAX_BODY = 1024 * 1024;
 function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
     "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
   });
@@ -60,31 +60,30 @@ async function body(req: http.IncomingMessage): Promise<Record<string, unknown>>
     if (bytes > MAX_BODY) throw Object.assign(new Error("Body too large"), { status: 413 });
     raw += chunk;
   }
-  return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  try {
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Expected a JSON object.");
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw Object.assign(new Error("Request body must be a valid JSON object."), { status: 400 });
+  }
 }
 
 const str = (v: unknown, d = ""): string => (typeof v === "string" ? v : d);
 
 function handleAsk(db: DatabaseSync, req: http.IncomingMessage, res: http.ServerResponse, payload: Record<string, unknown>): void {
+  const input = parseAskInput(payload);
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
-    "Access-Control-Allow-Origin": "*",
   });
   const send = (e: PipelineEvent) => {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   };
-  const input: AskInput = {
-    question: str(payload["question"]),
-    questionType: (["binary", "timing", "numeric", "categorical"].includes(str(payload["questionType"])) ? str(payload["questionType"]) : "binary") as QuestionType,
-    deadline: str(payload["deadline"]),
-    resolutionCriteria: str(payload["resolutionCriteria"]),
-    context: str(payload["context"]),
-    demoMode: payload["demoMode"] === undefined ? undefined : Boolean(payload["demoMode"]),
-    councilSize: typeof payload["councilSize"] === "number" ? payload["councilSize"] : 4,
-    existingQuestionId: str(payload["existingQuestionId"]) || undefined,
-  };
+
   let closed = false;
   req.on("close", () => { closed = true; });
   runPipeline(input, {
@@ -175,9 +174,23 @@ export function createServer(db?: DatabaseSync): http.Server {
   return http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || "/", "http://x");
+      // Native/CLI clients have no Origin. Browser clients must be same-origin
+      // (including Vite's proxy), or explicitly allowed by the operator.
+      const origin = req.headers.origin;
+      const allowed = (process.env.DELPHI_ALLOWED_ORIGINS || "").split(",").map(s => s.trim()).filter(Boolean);
+      if (origin) {
+        let sameOrigin = false;
+        try {
+          const source = new URL(origin);
+          sameOrigin = ["http:", "https:"].includes(source.protocol) && source.host === req.headers.host;
+        } catch { /* malformed origins are rejected */ }
+        if (!sameOrigin && !allowed.includes(origin)) return json(res, 403, { error: "Origin is not allowed." });
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Vary", "Origin");
+      }
+      res.setHeader("X-Content-Type-Options", "nosniff");
       if (req.method === "OPTIONS") {
         res.writeHead(204, {
-          "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Headers": "Content-Type, Authorization",
           "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
         });
@@ -188,7 +201,7 @@ export function createServer(db?: DatabaseSync): http.Server {
       if (url.pathname === "/mcp") {
         if (req.method === "POST") {
           const payload = await body(req);
-          return handleMcpRequest(database, req, res, payload);
+          return await handleMcpRequest(database, req, res, payload);
         }
         // Stateless mode: no SSE stream, no sessions.
         res.writeHead(405, { "Content-Type": "application/json" });
@@ -205,7 +218,7 @@ export function createServer(db?: DatabaseSync): http.Server {
         );
         return;
       }
-      if (url.pathname === "/api/health" && req.method === "GET") return handleHealth(res);
+      if (url.pathname === "/api/health" && req.method === "GET") return await handleHealth(res);
       if (url.pathname === "/api/ask" && req.method === "POST") {
         const payload = await body(req);
         return handleAsk(database, req, res, payload);
@@ -237,7 +250,7 @@ export function createServer(db?: DatabaseSync): http.Server {
       const modelMatch = /^\/api\/providers\/([^/]+)\/model$/.exec(url.pathname);
       if (modelMatch && req.method === "POST") {
         const payload = await body(req);
-        return handleSetProviderModel(res, decodeURIComponent(modelMatch[1]), payload);
+        return await handleSetProviderModel(res, decodeURIComponent(modelMatch[1]), payload);
       }
       if (url.pathname.startsWith("/api/")) return json(res, 404, { error: "Not found." });
       if (req.method === "GET" && serveStatic(req, res)) return;

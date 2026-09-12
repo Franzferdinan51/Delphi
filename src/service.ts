@@ -15,7 +15,7 @@ import {
 import { resolveForecast } from "./resolve.js";
 import { COUNCILORS, councilorById } from "./council.js";
 import { defaultProviders, resolveProviders, DELPHI, VERSION } from "./config.js";
-import { calibrationBuckets } from "./scoring.js";
+import { brierScore, calibrationBuckets } from "./scoring.js";
 import type {
   CouncilorOpinion,
   DecompositionStep,
@@ -51,6 +51,7 @@ export function storedForecast(
   if (!f) return null;
   const q = getQuestion(db, f["question_id"] as string);
   if (!q) return null;
+  const weights: Record<string, number> = JSON.parse((f["weights_json"] as string) || "{}");
   const opinions = getOpinions(db, forecastId).map((o) => {
     let name = o.councilor_id;
     let tagline = "";
@@ -73,7 +74,7 @@ export function storedForecast(
       answer: o.answer,
       reasoning: o.reasoning,
       status: o.status as CouncilorOpinion["status"],
-      weight: 0,
+      weight: weights[o.councilor_id] || 0,
     } satisfies CouncilorOpinion;
   });
   return {
@@ -91,7 +92,7 @@ export function storedForecast(
     answer: f["answer"] as string,
     confidenceRange: [f["confidence_lo"] as number, f["confidence_hi"] as number],
     confidenceScore: (f["confidence_score"] as number) ?? 0,
-    confidenceBreakdown: { agreement: 0, priorConvergence: 0, evidence: 0, trackRecord: 0 },
+    confidenceBreakdown: { agreement: 0, priorConvergence: 0, evidence: 0, trackRecord: 0, ...JSON.parse((f["confidence_breakdown_json"] as string) || "{}") },
     summary: f["summary"] as string,
     timeline: f["timeline"] as string,
     bestCase: f["best_case"] as string,
@@ -136,9 +137,13 @@ function safeParseGate(raw: unknown): { decomposition: DecompositionStep[]; qual
 
 /** Resolve a question by full id or unambiguous id prefix. */
 export function findQuestion(db: DatabaseSync, id: string) {
-  const match = listQuestions(db).find((q) => q.id === id || q.id.startsWith(id));
-  if (!match) fail(404, "Question not found.");
-  return match;
+  if (!id.trim()) fail(400, "Question id is required.");
+  const exact = getQuestion(db, id);
+  if (exact) return exact;
+  const matches = listQuestions(db).filter(q => q.id.startsWith(id));
+  if (!matches.length) fail(404, "Question not found.");
+  if (matches.length > 1) fail(409, "Ambiguous question id; use a longer prefix.");
+  return matches[0];
 }
 
 export function listQuestionsView(db: DatabaseSync) {
@@ -219,8 +224,7 @@ export function calibrationView(db: DatabaseSync) {
   // Brier over time: cumulative mean Brier after each resolution.
   let sumSq = 0;
   const brierOverTime = pairs.map((p, i) => {
-    const pr = Math.min(0.999, Math.max(0.001, p.probability / 100));
-    sumSq += (pr - p.outcome) ** 2;
+    sumSq += brierScore(p.probability / 100, p.outcome as 0 | 1);
     return { date: (p.date || "").slice(0, 10), brier: sumSq / (i + 1), n: i + 1 };
   });
   return { buckets, brierOverTime };

@@ -7,6 +7,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DELPHI } from "./config.js";
 import type { QuestionType } from "./types.js";
+import { brierScore, logScore } from "./scoring.js";
 
 let db: DatabaseSync | null = null;
 
@@ -87,6 +88,7 @@ function migrate(d: DatabaseSync): void {
   addColumnIfMissing(d, "questions", "gate_json", "TEXT NOT NULL DEFAULT '{}'");
   addColumnIfMissing(d, "forecasts", "confidence_score", "REAL NOT NULL DEFAULT 0");
   addColumnIfMissing(d, "forecasts", "priors_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(d, "forecasts", "confidence_breakdown_json", "TEXT NOT NULL DEFAULT '{}'");
 }
 
 function addColumnIfMissing(
@@ -187,14 +189,15 @@ export interface ForecastRow {
   weights_json: string;
   confidence_score: number;
   priors_json: string;
+  confidence_breakdown_json?: string;
 }
 
 export function insertForecast(d: DatabaseSync, row: ForecastRow): void {
   d.prepare(
     `INSERT INTO forecasts (id, question_id, run_number, created_at, probability, confidence, answer,
       confidence_lo, confidence_hi, summary, timeline, best_case, worst_case, readout_json, weights_json,
-      confidence_score, priors_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      confidence_score, priors_json, confidence_breakdown_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id,
     row.question_id,
@@ -213,6 +216,7 @@ export function insertForecast(d: DatabaseSync, row: ForecastRow): void {
     row.weights_json,
     row.confidence_score,
     row.priors_json,
+    row.confidence_breakdown_json || "{}",
   );
 }
 
@@ -289,17 +293,17 @@ export function councilorTrackRecords(
   const rows = d
     .prepare(
       `SELECT o.councilor_id AS cid, o.probability AS p, q.score AS s
-       FROM opinions o JOIN questions q ON q.id = o.question_id
-       WHERE q.status = 'resolved' AND o.round = 2 AND q.score IS NOT NULL`,
+       FROM opinions o JOIN questions q ON q.id = o.question_id JOIN forecasts f ON f.id = o.forecast_id
+       WHERE q.status = 'resolved' AND o.round = 2 AND o.status != 'error' AND q.score IS NOT NULL
+         AND f.run_number = (SELECT MAX(run_number) FROM forecasts WHERE question_id = q.id)`,
     )
     .all() as Array<{ cid: string; p: number; s: number }>;
   const map = new Map<string, { n: number; sumSqErr: number; sumLogScore: number }>();
   for (const r of rows) {
-    const p = Math.min(0.999, Math.max(0.001, r.p / 100));
     const entry = map.get(r.cid) || { n: 0, sumSqErr: 0, sumLogScore: 0 };
     entry.n += 1;
-    entry.sumSqErr += (p - r.s) ** 2;
-    entry.sumLogScore += r.s * Math.log(p) + (1 - r.s) * Math.log(1 - p);
+    entry.sumSqErr += brierScore(r.p / 100, r.s as 0 | 1);
+    entry.sumLogScore += logScore(r.p / 100, r.s as 0 | 1);
     map.set(r.cid, entry);
   }
   return map;
@@ -312,16 +316,16 @@ export function providerTrackRecords(
   const rows = d
     .prepare(
       `SELECT o.provider_id AS pid, o.probability AS p, q.score AS s
-       FROM opinions o JOIN questions q ON q.id = o.question_id
-       WHERE q.status = 'resolved' AND o.round = 2 AND q.score IS NOT NULL`,
+       FROM opinions o JOIN questions q ON q.id = o.question_id JOIN forecasts f ON f.id = o.forecast_id
+       WHERE q.status = 'resolved' AND o.round = 2 AND o.status != 'error' AND q.score IS NOT NULL
+         AND f.run_number = (SELECT MAX(run_number) FROM forecasts WHERE question_id = q.id)`,
     )
     .all() as Array<{ pid: string; p: number; s: number }>;
   const map = new Map<string, { n: number; sumSqErr: number }>();
   for (const r of rows) {
-    const p = Math.min(0.999, Math.max(0.001, r.p / 100));
     const entry = map.get(r.pid) || { n: 0, sumSqErr: 0 };
     entry.n += 1;
-    entry.sumSqErr += (p - r.s) ** 2;
+    entry.sumSqErr += brierScore(r.p / 100, r.s as 0 | 1);
     map.set(r.pid, entry);
   }
   return map;
@@ -335,7 +339,8 @@ export function calibrationPairs(
     .prepare(
       `SELECT f.probability AS probability, q.score AS outcome, q.resolved_at AS date
        FROM forecasts f JOIN questions q ON q.id = f.question_id
-       WHERE q.status = 'resolved' AND q.score IS NOT NULL AND f.run_number = 1
+       WHERE q.status = 'resolved' AND q.score IS NOT NULL
+         AND f.run_number = (SELECT MAX(run_number) FROM forecasts WHERE question_id = q.id)
        ORDER BY q.resolved_at ASC`,
     )
     .all() as Array<{ probability: number; outcome: number; date: string }>;

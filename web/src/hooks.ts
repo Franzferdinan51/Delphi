@@ -68,11 +68,12 @@ export function formatDate(iso: string | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", ...(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? { timeZone: "UTC" } : {}) });
 }
 
 export function formatDateTime(iso: string | undefined): string {
   if (!iso) return "—";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return formatDate(iso);
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString(undefined, {
@@ -83,8 +84,8 @@ export function formatDateTime(iso: string | undefined): string {
   });
 }
 
-/** Normalize a 0-1 or 0-100 value to 0-100. */
+/** Clamp an API forecast percentage (0-100), never guess its scale. */
 export function toPct(v: number): number {
   if (!Number.isFinite(v)) return 0;
-  return v > 1 ? Math.min(100, v) : v * 100;
+  return Math.max(0, Math.min(100, v));
 }

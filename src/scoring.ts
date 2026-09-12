@@ -8,7 +8,7 @@ export const clampP = (p: number): number => Math.min(0.999, Math.max(0.001, p))
 
 /** Brier score for one forecast: (p - outcome)^2. Lower is better. */
 export function brierScore(probability: number, outcome: 0 | 1): number {
-  const p = clampP(probability);
+  const p = Math.min(1, Math.max(0, probability));
   return (p - outcome) ** 2;
 }
 

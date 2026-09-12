@@ -4,6 +4,7 @@ web/dist/
 web/node_modules/
 data/*.db
 data/*.db-*
+data/provider-models.json
 .env
 .env.local
 reference/

@@ -43,7 +43,13 @@ export function checkQuality(response: string): QualityResult {
       score -= 30;
     }
   }
-  return { passed: score >= 60, issues, score: Math.max(0, score) };
+  const rawProbability = extractTag(response, "probability").replace(/%$/, "").trim();
+  const probability = Number(rawProbability);
+  const validProbability = rawProbability !== "" && Number.isFinite(probability) && probability >= 0 && probability <= 100;
+  if (!validProbability) issues.push("Probability must be a number from 0 to 100.");
+  const hasReasoning = extractTag(response, "reasoning").length > 0;
+  if (!hasReasoning) issues.push("Reasoning is required.");
+  return { passed: score >= 60 && validProbability && hasReasoning, issues, score: Math.max(0, score) };
 }
 
 export function extractTag(text: string, tag: string): string {
@@ -79,8 +85,9 @@ export function parseOpinion(text: string): ParsedOpinion {
   const rawProb =
     extractTag(text, "probability") || proseMatch?.[1] || "50";
   const conf = extractTag(text, "confidence").toLowerCase();
+  const parsedProbability = Number.parseFloat(rawProb);
   return {
-    probability: Math.max(0, Math.min(100, Number.parseInt(rawProb, 10) || 50)),
+    probability: Math.max(0, Math.min(100, Number.isFinite(parsedProbability) ? parsedProbability : 50)),
     confidence: conf.startsWith("high") ? "High" : conf.startsWith("low") ? "Low" : "Medium",
     answer: extractTag(text, "forecast_answer") || extractTag(text, "answer"),
     reasoning:
