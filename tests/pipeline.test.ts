@@ -28,9 +28,26 @@ describe("pipeline (demo mode)", () => {
     expect(forecast.opinions.every((o) => o.status === "demo")).toBe(true);
     expect(forecast.readout.thesis.length).toBeGreaterThan(0);
 
+    // Priors, gate, and confidence score
+    expect(forecast.confidenceScore).toBeGreaterThanOrEqual(0);
+    expect(forecast.confidenceScore).toBeLessThanOrEqual(100);
+    expect(forecast.confidenceBreakdown.agreement).toBeGreaterThanOrEqual(0);
+    expect(forecast.priors.baseRate).not.toBeNull();
+    expect(forecast.priors.baseRate!.value).toBeGreaterThanOrEqual(1);
+    expect(forecast.decomposition.length).toBeGreaterThanOrEqual(2);
+    expect(forecast.questionQuality).toBeGreaterThan(0);
+    expect(forecast.sharpenedQuestion.length).toBeGreaterThan(0);
+
     const types = events.map((e) => e.type);
     expect(types[0]).toBe("started");
     expect(types).toContain("phase");
+    expect(types).toContain("gate");
+    expect(types).toContain("priors");
+    const phases = events
+      .filter((e) => e.type === "phase")
+      .map((e) => (e as { phase: string }).phase);
+    expect(phases).toContain("gate");
+    expect(phases).toContain("priors");
     expect(types.filter((t) => t === "opinion")).toHaveLength(8); // 4 councilors × 2 rounds
     expect(types[types.length - 1]).toBe("result");
 
@@ -49,6 +66,9 @@ describe("pipeline (demo mode)", () => {
     const a = await run();
     const b = await run();
     expect(a.probability).toBe(b.probability);
+    expect(a.confidenceScore).toBe(b.confidenceScore);
+    expect(a.priors).toEqual(b.priors);
+    expect(a.decomposition).toEqual(b.decomposition);
     expect(a.opinions.map((o) => o.probability)).toEqual(b.opinions.map((o) => o.probability));
   });
 

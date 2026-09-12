@@ -116,8 +116,14 @@ async function cmdAsk(db: DatabaseSync, args: Args): Promise<void> {
 
   console.log(`\n━━━ Delphi forecast ━━━`);
   console.log(`Question: ${forecast.question}`);
-  console.log(`Aggregate: ${forecast.probability}%  (confidence ${forecast.confidence}, range ${forecast.confidenceRange[0]}–${forecast.confidenceRange[1]})`);
+  console.log(`Aggregate: ${forecast.probability}%  (confidence ${forecast.confidence}, score ${forecast.confidenceScore}/100, range ${forecast.confidenceRange[0]}–${forecast.confidenceRange[1]})`);
   console.log(`Central answer: ${forecast.answer}`);
+  if (forecast.priors?.baseRate || forecast.priors?.market) {
+    const p = forecast.priors;
+    console.log(
+      `Priors: ${p.baseRate ? `base rate ${p.baseRate.value}% (${p.baseRate.referenceClass})` : "no base rate"}${p.market ? ` · market ${p.market.value}% (${p.market.market.slice(0, 60)})` : ""}`,
+    );
+  }
   console.log(`\nThesis: ${forecast.readout.thesis}`);
   console.log(`\nDrivers:\n  - ${forecast.readout.drivers.join("\n  - ")}`);
   console.log(`\nCounter-signals:\n  - ${forecast.readout.counterSignals.join("\n  - ")}`);

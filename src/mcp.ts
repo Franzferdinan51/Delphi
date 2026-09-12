@@ -60,7 +60,7 @@ export function buildToolHandlers(db: DatabaseSync): ToolHandler[] {
     {
       name: "ask_forecast",
       description:
-        "Run the full Delphi council pipeline on a question: research, independent deliberation, critic round, track-record-weighted aggregation. Returns the stored forecast with per-councilor opinions, probabilities, and readout. Use existing_question_id to re-run (belief tracking) instead of creating a new question.",
+        "Run the full Delphi council pipeline on a question: question gate (sharpening + Fermi decomposition), research, Bayesian priors (base rate + prediction-market anchor), independent deliberation, critic round, track-record-weighted aggregation with a 0-100 confidence score. Returns the stored forecast with per-councilor opinions, probabilities, priors, and readout. Use existing_question_id to re-run (belief tracking) instead of creating a new question.",
       schema: {
         question: z.string().describe("The forecasting question, plainly worded"),
         question_type: QuestionTypeSchema,

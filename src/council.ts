@@ -130,7 +130,7 @@ export function selectCouncilors(
   return scored.slice(0, n).map((s) => s.c);
 }
 
-/** Build the round-1 prompt: persona + brief + research notes. */
+/** Build the round-1 prompt: persona + brief + research notes + priors + decomposition. */
 export function buildBriefPrompt(
   councilor: CouncilorDef,
   brief: {
@@ -140,6 +140,8 @@ export function buildBriefPrompt(
     resolutionCriteria: string;
     context: string;
     researchNotes: string;
+    priorNotes?: string;
+    decompositionNotes?: string;
   },
 ): string {
   const answerInstruction =
@@ -159,6 +161,8 @@ export function buildBriefPrompt(
       : "",
     brief.context.trim() ? `Context:\n${brief.context.trim()}` : "",
     brief.researchNotes.trim() ? `Research notes:\n${brief.researchNotes.trim()}` : "",
+    brief.priorNotes?.trim() ? `Bayesian anchors (argue for/against moving from each):\n${brief.priorNotes.trim()}` : "",
+    brief.decompositionNotes?.trim() ? `${brief.decompositionNotes.trim()}` : "",
     [
       "Return XML only.",
       answerInstruction,

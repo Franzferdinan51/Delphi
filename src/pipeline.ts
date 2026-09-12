@@ -1,14 +1,16 @@
 /**
- * Delphi pipeline — Research → Deliberate → Critic → Aggregate → Learn.
+ * Delphi pipeline — Gate → Research → Priors → Deliberate → Critic → Aggregate → Learn.
  *
  * Per question:
+ *   0. Gate: sharpen the question, Fermi-decompose it, flag ambiguities.
  *   1. Intake: validate + store the question.
  *   2. Research: budgeted web research with cache.
- *   3. Deliberation round 1: councilors forecast independently (parallel).
- *   4. Critic round 2: each sees peers' reasoning, may update.
- *   5. Aggregation: log opinion pool weighted by track record + extremization.
- *   6. Output: full readout stored; new runs append (belief tracking).
- *   7. Learn: resolution later grades everyone (see resolve.ts).
+ *   3. Priors: outside-view base rate + prediction-market anchor (Bayesian anchors).
+ *   4. Deliberation round 1: councilors forecast independently (parallel).
+ *   5. Critic round 2: each sees peers' reasoning, may update.
+ *   6. Aggregation: log opinion pool weighted by track record + extremization.
+ *   7. Output: full readout stored; new runs append (belief tracking).
+ *   8. Learn: resolution later grades everyone (see resolve.ts).
  */
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -18,6 +20,7 @@ import type {
   ForecastPayload,
   ForecastReadout,
   PipelineEvent,
+  PriorSet,
   ProviderConfig,
   ResearchResult,
 } from "./types.js";
@@ -29,11 +32,15 @@ import {
   insertOpinion,
   nextRunNumber,
   councilorTrackRecords,
+  updateQuestionGate,
 } from "./db.js";
 import { defaultProviders, resolveProviders, providerById, councilorProviderOverrides, DELPHI, isProviderUsable } from "./config.js";
 import { COUNCILORS, selectCouncilors } from "./council.js";
 import { askLive, demoOpinion, type BriefInput } from "./providers.js";
 import { buildQueries, runQuery, researchNotes } from "./research.js";
+import { collectPriors, blendPriors, priorsNotes, emptyPriors } from "./priors.js";
+import { sharpenQuestion, decompositionNotes, type GateResult } from "./question-gate.js";
+import { confidenceScore } from "./confidence.js";
 import {
   aggregate,
   confidenceFromSpread,
@@ -193,9 +200,43 @@ export async function runPipeline(
     })),
   });
 
+  // ── 0. Question gate: sharpen, decompose, flag ambiguities ──────────
+  emit({ type: "phase", phase: "gate" });
+  const anchorProvider = liveProviders[0] ?? null;
+  const gate: GateResult = await sharpenQuestion(
+    {
+      question: questionText,
+      questionType,
+      deadline,
+      resolutionCriteria,
+      context,
+    },
+    { provider: anchorProvider, demoMode },
+  );
+  updateQuestionGate(
+    db,
+    questionId,
+    gate.sharpened,
+    JSON.stringify({
+      criteria: gate.criteria,
+      decomposition: gate.decomposition,
+      ambiguities: gate.ambiguities,
+      qualityScore: gate.qualityScore,
+      changed: gate.changed,
+    }),
+  );
+  emit({
+    type: "gate",
+    sharpened: gate.sharpened,
+    qualityScore: gate.qualityScore,
+    ambiguities: gate.ambiguities,
+  });
+  const briefQuestion = gate.sharpened || questionText;
+  const briefCriteria = gate.criteria || resolutionCriteria;
+
   // ── 2. Research ────────────────────────────────────────────────────────
   emit({ type: "phase", phase: "research" });
-  const queries = buildQueries(questionText, deadline);
+  const queries = buildQueries(briefQuestion, deadline);
   const perQuery: Array<{ query: string; results: ResearchResult[] }> = [];
   for (const q of queries) {
     try {
@@ -212,13 +253,30 @@ export async function runPipeline(
   }
   const notes = researchNotes(perQuery);
 
+  // ── 3. Priors: outside-view base rate + prediction-market anchor ──────
+  emit({ type: "phase", phase: "priors" });
+  let priors: PriorSet = emptyPriors();
+  try {
+    priors = await collectPriors(briefQuestion, deadline, {
+      db,
+      provider: anchorProvider,
+      demoMode,
+    });
+  } catch {
+    priors = emptyPriors(); // priors are advisory, never fatal
+  }
+  emit({ type: "priors", priors });
+  const priorNotes = priorsNotes(priors);
+
   const brief: BriefInput = {
-    question: questionText,
+    question: briefQuestion,
     questionType,
     deadline,
-    resolutionCriteria,
+    resolutionCriteria: briefCriteria,
     context,
     researchNotes: notes,
+    priorNotes,
+    decompositionNotes: decompositionNotes(gate),
   };
 
   // ── 3. Deliberation, round 1 (independent) ─────────────────────────────
@@ -346,6 +404,18 @@ export async function runPipeline(
   const spread = pool.length
     ? Math.max(...pool.map((o) => o.probability)) - Math.min(...pool.map((o) => o.probability))
     : 0;
+
+  // Numeric confidence score: council agreement + prior convergence +
+  // research evidence + track-record credibility.
+  const blendedPrior = blendPriors(priors);
+  const researchCount = perQuery.reduce((s, q) => s + q.results.length, 0);
+  const resolvedTotal = counts.reduce((s, c) => s + c, 0);
+  const conf = confidenceScore({
+    spread,
+    priorDistance: blendedPrior == null ? null : Math.abs(probability - blendedPrior),
+    researchResults: researchCount,
+    resolvedTotal,
+  });
   const summary =
     questionType === "binary"
       ? `${probability}% aggregate likelihood before ${deadline}. Council confidence is ${confidence.toLowerCase()}; round-2 estimates span ${spread} points.`
@@ -375,6 +445,8 @@ export async function runPipeline(
     worst_case: readout.counterSignals[0] || "A disconfirming signal invalidates the assumptions.",
     readout_json: JSON.stringify(readout),
     weights_json: JSON.stringify(weightsMap),
+    confidence_score: conf.score,
+    priors_json: JSON.stringify(priors),
   });
   for (const o of opinionsR2) {
     insertOpinion(db, {
@@ -407,6 +479,8 @@ export async function runPipeline(
     confidence,
     answer,
     confidenceRange: [clo, chi],
+    confidenceScore: conf.score,
+    confidenceBreakdown: conf.breakdown,
     summary,
     timeline: `Resolution by ${deadline}`,
     bestCase: readout.drivers[0] || "Supporting evidence continues to accumulate.",
@@ -415,6 +489,10 @@ export async function runPipeline(
     opinions: opinionsR2,
     weights: weightsMap,
     method: "logarithmic-opinion-pool",
+    priors,
+    sharpenedQuestion: briefQuestion,
+    decomposition: gate.decomposition,
+    questionQuality: gate.qualityScore,
   };
 
   emit({ type: "phase", phase: "done" });

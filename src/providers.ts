@@ -15,6 +15,10 @@ export interface BriefInput {
   resolutionCriteria: string;
   context: string;
   researchNotes: string;
+  /** Bayesian anchors from the priors phase (base rate + market). Optional. */
+  priorNotes?: string;
+  /** Fermi decomposition from the question gate. Optional. */
+  decompositionNotes?: string;
 }
 
 function headers(p: ProviderConfig): Record<string, string> {
@@ -24,7 +28,8 @@ function headers(p: ProviderConfig): Record<string, string> {
   };
 }
 
-async function chatCompletion(
+/** Low-level OpenAI-compatible chat call. Exported for priors + question gate. */
+export async function chatCompletion(
   provider: ProviderConfig,
   system: string,
   user: string,

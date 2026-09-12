@@ -9,7 +9,7 @@ Built from Ryan's [Prediction](https://github.com/Franzferdinan51/Prediction) (f
 ```bash
 cd ~/workspace/delphi
 npm install          # engine deps
-npm test             # 39 tests
+npm test             # 77 tests
 npm run dev:api      # API on http://127.0.0.1:8790 (demo mode, zero creds)
 npm run dev          # web UI (proxies /api → :8790)
 ```
@@ -69,7 +69,7 @@ Research: `SEARXNG_URL` (default `http://127.0.0.1:8080`), or `TAVILY_API_KEY` /
 
 ```
 src/
-  pipeline.ts   Research → Deliberate → Critic → Aggregate → Learn
+  pipeline.ts   Gate → Research → Priors → Deliberate → Critic → Aggregate → Learn
   council.ts    5 personas + topic-relevance selection + prompts
   providers.ts  OpenAI-compatible chat calls + deterministic demo mode
   research.ts   SearXNG/Tavily/Brave, 5-min SQLite cache, URL dedup
@@ -89,15 +89,17 @@ web/            Vite + React UI (built by a second agent, same contract)
 ### The pipeline, per question
 
 1. **Intake** — question, type (`binary` | `timing` | `numeric` | `categorical`), deadline, resolution criteria, context → SQLite.
-2. **Research** — budgeted web research (2 queries × 6 results), 5-minute cache, URL dedup; notes injected into every councilor's brief.
-3. **Deliberation** — 3–5 personas selected by topic relevance forecast **independently** (round 1, parallel). Each persona is a system prompt + assigned provider:
+2. **Question gate** — sharpens vague wording into a falsifiable question, tightens (or drafts) resolution criteria, Fermi-decomposes into 2–4 estimable sub-questions, flags ambiguities, and scores question quality 0–100. The sharpened question drives everything downstream; the original is always preserved.
+3. **Research** — budgeted web research (2 queries × 6 results), 5-minute cache, URL dedup; notes injected into every councilor's brief.
+4. **Priors** — Bayesian anchors collected *before* deliberation: the outside-view base rate for the reference class (lightweight LLM estimate) and the live implied probability from Polymarket when a liquid related market exists. Councilors must explicitly argue for or against moving away from each anchor.
+5. **Deliberation** — 3–5 personas selected by topic relevance forecast **independently** (round 1, parallel). Each persona is a system prompt + assigned provider:
    - **Base-Rate Analyst** — outside view, reference classes
    - **Domain Expert** — inside view, causal mechanisms
    - **Skeptic** — red team, steelmans the opposite
    - **Superforecaster** — Fermi decomposition, Bayesian updating
    - **Quant Modeler** — distributions, explicit numbers
 4. **Critic** — round 2: each councilor sees peers' reasoning and may update (anchoring to the group is penalized in the prompt).
-5. **Aggregation** — logarithmic opinion pool (geometric-mean consensus), weights from each councilor's resolved Brier history, then extremization. Cold start: equal weights until 5+ resolved forecasts each.
+5. **Aggregation** — logarithmic opinion pool (geometric-mean consensus), weights from each councilor's resolved Brier history, then extremization. Cold start: equal weights until 5+ resolved forecasts each. Emits a **0–100 confidence score** blending council agreement, prior convergence, research evidence, and track-record credibility, with a per-component breakdown.
 6. **Output** — central answer, calibrated probability, full readout (thesis, drivers, counter-signals, update triggers, assumptions, best/worst case, timeline, indicators, per-councilor opinions with reasoning).
 7. **Resolution & grading** — `resolve` records the outcome; Brier + log scores per councilor and provider update the leaderboard. This self-grading loop is the killer feature.
 8. **Belief tracking** — re-running a question (`--rerun <id>` / `existingQuestionId`) appends a new forecast run; the UI charts probability over time.

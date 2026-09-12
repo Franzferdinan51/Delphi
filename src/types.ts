@@ -95,6 +95,41 @@ export interface ForecastReadout {
   indicators: string[];
 }
 
+/** Outside-view base rate anchor (from priors.ts). */
+export interface BaseRatePrior {
+  /** 0-100 */
+  value: number;
+  referenceClass: string;
+  source: string;
+}
+
+/** Prediction-market anchor (from priors.ts). */
+export interface MarketPrior {
+  /** 0-100, Yes-side implied probability */
+  value: number;
+  market: string;
+  url: string;
+  volumeUsd: number;
+  source: string;
+}
+
+export interface PriorSet {
+  baseRate: BaseRatePrior | null;
+  market: MarketPrior | null;
+}
+
+export interface DecompositionStep {
+  sub: string;
+  estimate: string;
+}
+
+export interface ConfidenceBreakdown {
+  agreement: number;
+  priorConvergence: number;
+  evidence: number;
+  trackRecord: number;
+}
+
 export interface ForecastPayload {
   id: string;
   questionId: string;
@@ -107,6 +142,9 @@ export interface ForecastPayload {
   context: string;
   probability: number;
   confidence: "High" | "Medium" | "Low";
+  /** Numeric 0-100 confidence score with explainable breakdown. */
+  confidenceScore: number;
+  confidenceBreakdown: ConfidenceBreakdown;
   answer: string;
   confidenceRange: [number, number];
   summary: string;
@@ -117,10 +155,19 @@ export interface ForecastPayload {
   opinions: CouncilorOpinion[];
   weights: Record<string, number>;
   method: string;
+  /** Bayesian anchors collected before deliberation. */
+  priors: PriorSet;
+  /** Question-gate output. */
+  sharpenedQuestion: string;
+  decomposition: DecompositionStep[];
+  /** 0-100 quality score of the original question. */
+  questionQuality: number;
 }
 
 export type PipelinePhase =
+  | "gate"
   | "research"
+  | "priors"
   | "deliberation"
   | "critic"
   | "aggregation"
@@ -130,6 +177,8 @@ export type PipelineEvent =
   | { type: "started"; questionId: string; councilors: Array<{ id: string; name: string; tagline: string; provider: ProviderId }> }
   | { type: "phase"; phase: PipelinePhase }
   | { type: "research"; query: string; results: ResearchResult[] }
+  | { type: "gate"; sharpened: string; qualityScore: number; ambiguities: string[] }
+  | { type: "priors"; priors: PriorSet }
   | { type: "opinion"; opinion: CouncilorOpinion }
   | { type: "result"; forecast: ForecastPayload }
   | { type: "error"; message: string };

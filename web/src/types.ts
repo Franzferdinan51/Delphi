@@ -1,5 +1,5 @@
 export type QuestionType = "binary" | "timing" | "numeric" | "categorical";
-export type Phase = "research" | "deliberation" | "critic" | "aggregation" | "done";
+export type Phase = "gate" | "research" | "priors" | "deliberation" | "critic" | "aggregation" | "done";
 export type ConfidenceLevel = "High" | "Medium" | "Low";
 export type OpinionStatus = "live" | "demo" | "error";
 
@@ -66,6 +66,23 @@ export interface ForecastReadout {
   indicators: string[];
 }
 
+export interface ConfidenceBreakdown {
+  agreement: number;
+  priorConvergence: number;
+  evidence: number;
+  trackRecord: number;
+}
+
+export interface PriorSet {
+  baseRate: { value: number; referenceClass: string; source: string } | null;
+  market: { value: number; market: string; url: string; volumeUsd: number; source: string } | null;
+}
+
+export interface DecompositionStep {
+  sub: string;
+  estimate: string;
+}
+
 export interface Forecast {
   id: string;
   questionId: string;
@@ -78,6 +95,9 @@ export interface Forecast {
   context?: string;
   probability: number; // 0-100
   confidence: ConfidenceLevel | string;
+  /** Numeric 0-100 confidence score. */
+  confidenceScore?: number;
+  confidenceBreakdown?: ConfidenceBreakdown;
   answer: string;
   confidenceRange: [number, number];
   summary: string;
@@ -88,6 +108,10 @@ export interface Forecast {
   opinions: OpinionPayload[];
   weights: Record<string, number>;
   method: string;
+  priors?: PriorSet;
+  sharpenedQuestion?: string;
+  decomposition?: DecompositionStep[];
+  questionQuality?: number;
 }
 
 export type StreamEvent =
@@ -95,6 +119,8 @@ export type StreamEvent =
   | { type: "phase"; phase: Phase }
   | ResearchEvent
   | OpinionEvent
+  | { type: "gate"; sharpened: string; qualityScore: number; ambiguities: string[] }
+  | { type: "priors"; priors: PriorSet }
   | { type: "result"; forecast: Forecast }
   | { type: "error"; message: string };
 

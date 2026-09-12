@@ -149,6 +149,8 @@ export function seedIfEmpty(db: DatabaseSync = getDb()): boolean {
         indicators: ["Seeded example indicator"],
       }),
       weights_json: JSON.stringify(weightsMap),
+      confidence_score: 55,
+      priors_json: JSON.stringify({ baseRate: null, market: null }),
     });
     for (const o of s.opinions) {
       const c = COUNCILORS.find((x) => x.id === o.councilor)!;

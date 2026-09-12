@@ -34,6 +34,9 @@ export function ResultPanel({ forecast }: { forecast: Forecast }) {
         <div className="result-meta">
           <TypeChip type={forecast.questionType} />
           <ConfidenceChip level={forecast.confidence} />
+          {typeof forecast.confidenceScore === "number" && (
+            <Chip>Score {Math.round(forecast.confidenceScore)}/100</Chip>
+          )}
           <Chip>Run #{forecast.runNumber}</Chip>
           <Chip>{formatDateTime(forecast.createdAt)}</Chip>
           {forecast.deadline && <Chip>Deadline {formatDateTime(forecast.deadline)}</Chip>}
@@ -109,6 +112,48 @@ export function ResultPanel({ forecast }: { forecast: Forecast }) {
                 </span>
               ))}
             </div>
+          </div>
+        )}
+
+        {(forecast.priors?.baseRate || forecast.priors?.market || (forecast.decomposition?.length ?? 0) > 0) && (
+          <div className="card priors-card">
+            <p className="section-title">Bayesian anchors & decomposition</p>
+            <ul>
+              {forecast.priors?.baseRate && (
+                <li>
+                  Base rate <strong>{forecast.priors.baseRate.value}%</strong> —{" "}
+                  {forecast.priors.baseRate.referenceClass}{" "}
+                  <span className="muted">({forecast.priors.baseRate.source})</span>
+                </li>
+              )}
+              {forecast.priors?.market && (
+                <li>
+                  Market <strong>{forecast.priors.market.value}%</strong> — {forecast.priors.market.market}{" "}
+                  <span className="muted">
+                    ({forecast.priors.market.source}
+                    {forecast.priors.market.volumeUsd > 0 &&
+                      `, ~$${forecast.priors.market.volumeUsd.toLocaleString("en-US")} vol`})
+                  </span>
+                </li>
+              )}
+              {(forecast.decomposition ?? []).map((d, i) => (
+                <li key={i}>
+                  <strong>{i + 1}.</strong> {d.sub}
+                  {d.estimate && <span className="muted"> — {d.estimate}</span>}
+                </li>
+              ))}
+            </ul>
+            {typeof forecast.questionQuality === "number" && forecast.questionQuality > 0 && (
+              <p className="muted">Question quality: {Math.round(forecast.questionQuality)}/100</p>
+            )}
+            {forecast.confidenceBreakdown && (
+              <p className="muted">
+                Score breakdown — agreement {Math.round(forecast.confidenceBreakdown.agreement)}, prior
+                convergence {Math.round(forecast.confidenceBreakdown.priorConvergence)}, evidence{" "}
+                {Math.round(forecast.confidenceBreakdown.evidence)}, track record{" "}
+                {Math.round(forecast.confidenceBreakdown.trackRecord)}
+              </p>
+            )}
           </div>
         )}
 

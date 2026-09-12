@@ -18,7 +18,9 @@ import { defaultProviders, resolveProviders, DELPHI, VERSION } from "./config.js
 import { calibrationBuckets } from "./scoring.js";
 import type {
   CouncilorOpinion,
+  DecompositionStep,
   ForecastPayload,
+  PriorSet,
   ProviderId,
   QuestionType,
 } from "./types.js";
@@ -88,6 +90,8 @@ export function storedForecast(
     confidence: f["confidence"] as "High" | "Medium" | "Low",
     answer: f["answer"] as string,
     confidenceRange: [f["confidence_lo"] as number, f["confidence_hi"] as number],
+    confidenceScore: (f["confidence_score"] as number) ?? 0,
+    confidenceBreakdown: { agreement: 0, priorConvergence: 0, evidence: 0, trackRecord: 0 },
     summary: f["summary"] as string,
     timeline: f["timeline"] as string,
     bestCase: f["best_case"] as string,
@@ -96,7 +100,38 @@ export function storedForecast(
     opinions,
     weights: JSON.parse((f["weights_json"] as string) || "{}"),
     method: "logarithmic-opinion-pool",
+    priors: safeParsePriorSet(f["priors_json"]),
+    sharpenedQuestion: (q.sharpened_question as string) || q.question,
+    decomposition: safeParseGate(q.gate_json).decomposition,
+    questionQuality: safeParseGate(q.gate_json).qualityScore,
   };
+}
+
+function safeParsePriorSet(raw: unknown): PriorSet {
+  try {
+    const p = JSON.parse((raw as string) || "{}") as Partial<PriorSet>;
+    return {
+      baseRate: p.baseRate ?? null,
+      market: p.market ?? null,
+    };
+  } catch {
+    return { baseRate: null, market: null };
+  }
+}
+
+function safeParseGate(raw: unknown): { decomposition: DecompositionStep[]; qualityScore: number } {
+  try {
+    const g = JSON.parse((raw as string) || "{}") as {
+      decomposition?: DecompositionStep[];
+      qualityScore?: number;
+    };
+    return {
+      decomposition: Array.isArray(g.decomposition) ? g.decomposition : [],
+      qualityScore: typeof g.qualityScore === "number" ? g.qualityScore : 0,
+    };
+  } catch {
+    return { decomposition: [], qualityScore: 0 };
+  }
 }
 
 /** Resolve a question by full id or unambiguous id prefix. */

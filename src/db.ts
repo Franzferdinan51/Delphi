@@ -82,6 +82,25 @@ function migrate(d: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_opinions_question ON opinions(question_id);
     CREATE INDEX IF NOT EXISTS idx_forecasts_question ON forecasts(question_id);
   `);
+  // Column migrations for databases created before these fields existed.
+  addColumnIfMissing(d, "questions", "sharpened_question", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(d, "questions", "gate_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(d, "forecasts", "confidence_score", "REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing(d, "forecasts", "priors_json", "TEXT NOT NULL DEFAULT '{}'");
+}
+
+function addColumnIfMissing(
+  d: DatabaseSync,
+  table: string,
+  column: string,
+  ddl: string,
+): void {
+  const cols = d
+    .prepare(`PRAGMA table_info(${table})`)
+    .all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) {
+    d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
 }
 
 export interface QuestionRow {
@@ -96,6 +115,9 @@ export interface QuestionRow {
   resolved_at: string | null;
   outcome: string | null;
   score: number | null;
+  /** Question-gate output (added by migration; may be ''/'{}' on old rows). */
+  sharpened_question?: string;
+  gate_json?: string;
 }
 
 export function insertQuestion(
@@ -163,13 +185,16 @@ export interface ForecastRow {
   worst_case: string;
   readout_json: string;
   weights_json: string;
+  confidence_score: number;
+  priors_json: string;
 }
 
 export function insertForecast(d: DatabaseSync, row: ForecastRow): void {
   d.prepare(
     `INSERT INTO forecasts (id, question_id, run_number, created_at, probability, confidence, answer,
-      confidence_lo, confidence_hi, summary, timeline, best_case, worst_case, readout_json, weights_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      confidence_lo, confidence_hi, summary, timeline, best_case, worst_case, readout_json, weights_json,
+      confidence_score, priors_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id,
     row.question_id,
@@ -186,7 +211,21 @@ export function insertForecast(d: DatabaseSync, row: ForecastRow): void {
     row.worst_case,
     row.readout_json,
     row.weights_json,
+    row.confidence_score,
+    row.priors_json,
   );
+}
+
+/** Store the question-gate output on a question row. */
+export function updateQuestionGate(
+  d: DatabaseSync,
+  id: string,
+  sharpened: string,
+  gateJson: string,
+): void {
+  d.prepare(
+    `UPDATE questions SET sharpened_question = ?, gate_json = ? WHERE id = ?`,
+  ).run(sharpened, gateJson, id);
 }
 
 export function getForecasts(
