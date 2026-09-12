@@ -28,7 +28,7 @@ import {
   providersView,
 } from "./service.js";
 import type { AskInput, QuestionType } from "./types.js";
-import { VERSION } from "./config.js";
+import { VERSION, defaultProviders, resolveProviders, providerById, writeModelChoice } from "./config.js";
 
 const text = (value: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
@@ -135,9 +135,48 @@ export function buildToolHandlers(db: DatabaseSync): ToolHandler[] {
     {
       name: "get_providers",
       description:
-        "Provider status: the four built-ins (LM Studio local default, MiniMax, Grok/xAI, OpenAI) plus any custom OpenAI-compatible endpoints from DELPHI_PROVIDERS, with connectivity.",
+        "Provider status: the six built-ins (LM Studio local default, MiniMax, Grok/xAI, OpenAI, NVIDIA NIM, OpenCode Zen free) plus any custom OpenAI-compatible endpoints from DELPHI_PROVIDERS, with connectivity and the live model catalog pulled from each provider's /models API.",
       schema: {},
       handler: async () => providersView(),
+    },
+    {
+      name: "list_provider_models",
+      description:
+        "Pull the live model catalog from a provider's /models API. Delphi never hardcodes model IDs -- this is how you see what a provider can run.",
+      schema: {
+        id: z.string().describe("Provider id, e.g. lmstudio, minimax, grok, openai, nvidia, opencode"),
+      },
+      handler: async (args) => {
+        const p = providerById(await resolveProviders(defaultProviders()), String(args.id));
+        return {
+          provider: p.id,
+          name: p.name,
+          connected: p.connected,
+          model: p.model || null,
+          availableModels: p.availableModels,
+        };
+      },
+    },
+    {
+      name: "set_provider_model",
+      description:
+        "Choose which model a provider uses (persisted). Pick the model from list_provider_models first.",
+      schema: {
+        id: z.string().describe("Provider id"),
+        model: z.string().describe("Model id from the provider's live catalog"),
+      },
+      handler: async (args) => {
+        const model = String(args.model || "").trim();
+        if (!model) throw new Error("model is required.");
+        const providers = await resolveProviders(defaultProviders());
+        const p = providers.find((x) => x.id === String(args.id));
+        if (!p) throw new Error(`Unknown provider: ${args.id}`);
+        if (p.availableModels.length > 0 && !p.availableModels.includes(model)) {
+          throw new Error(`Unknown model "${model}" for ${p.name}. Pick one from its live catalog.`);
+        }
+        writeModelChoice(p.id, model);
+        return { ok: true, provider: p.id, model };
+      },
     },
     {
       name: "delphi_health",

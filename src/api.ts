@@ -33,7 +33,7 @@ import {
   forecastPayload,
   providersView,
 } from "./service.js";
-import { DELPHI, VERSION } from "./config.js";
+import { DELPHI, VERSION, defaultProviders, resolveProviders, writeModelChoice } from "./config.js";
 import type {
   AskInput,
   PipelineEvent,
@@ -115,6 +115,30 @@ function handleResolve(db: DatabaseSync, res: http.ServerResponse, payload: Reco
 
 async function handleHealth(res: http.ServerResponse): Promise<void> {
   json(res, 200, { ok: true, ...(await providersView()) });
+}
+
+async function handleSetProviderModel(
+  res: http.ServerResponse,
+  id: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const model = str(payload["model"]).trim();
+    if (!model) return json(res, 400, { error: "model is required." });
+    const providers = await resolveProviders(defaultProviders());
+    const provider = providers.find((p) => p.id === id);
+    if (!provider) return json(res, 404, { error: `Unknown provider: ${id}` });
+    if (provider.availableModels.length > 0 && !provider.availableModels.includes(model)) {
+      return json(res, 400, {
+        error: `Unknown model "${model}" for ${provider.name}. Pick one from its live catalog.`,
+      });
+    }
+    writeModelChoice(id, model);
+    json(res, 200, { ok: true, ...(await providersView()) });
+  } catch (e) {
+    const status = (e as { status?: number }).status || 400;
+    json(res, status, { error: e instanceof Error ? e.message : String(e) });
+  }
 }
 
 // ─── Static UI (web/dist) ────────────────────────────────────────────────────
@@ -208,6 +232,13 @@ export function createServer(db?: DatabaseSync): http.Server {
         return json(res, 200, leaderboardView(database));
       if (url.pathname === "/api/calibration" && req.method === "GET")
         return json(res, 200, calibrationView(database));
+      if (url.pathname === "/api/providers" && req.method === "GET")
+        return json(res, 200, { ok: true, providers: (await providersView()).providers });
+      const modelMatch = /^\/api\/providers\/([^/]+)\/model$/.exec(url.pathname);
+      if (modelMatch && req.method === "POST") {
+        const payload = await body(req);
+        return handleSetProviderModel(res, decodeURIComponent(modelMatch[1]), payload);
+      }
       if (url.pathname.startsWith("/api/")) return json(res, 404, { error: "Not found." });
       if (req.method === "GET" && serveStatic(req, res)) return;
       json(res, 404, { error: "Not found." });

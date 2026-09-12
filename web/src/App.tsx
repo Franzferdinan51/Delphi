@@ -6,6 +6,7 @@ import { Ask } from "./pages/Ask";
 import { Questions } from "./pages/Questions";
 import { QuestionDetail } from "./pages/QuestionDetail";
 import { Leaderboard } from "./pages/Leaderboard";
+import { Providers } from "./pages/Providers";
 import { Calibration } from "./pages/Calibration";
 import "./styles.css";
 
@@ -13,6 +14,7 @@ const LINKS = [
   { path: "/", label: "Ask" },
   { path: "/questions", label: "Questions" },
   { path: "/leaderboard", label: "Leaderboard" },
+  { path: "/providers", label: "Providers" },
   { path: "/calibration", label: "Calibration" },
 ];
 
@@ -75,6 +77,7 @@ function Router() {
   }
   if (route === "/questions") return <Questions />;
   if (route === "/leaderboard") return <Leaderboard />;
+  if (route === "/providers") return <Providers />;
   if (route === "/calibration") return <Calibration />;
   return <Ask />;
 }

@@ -6,7 +6,10 @@ export type OpinionStatus = "live" | "demo" | "error";
 export interface ProviderInfo {
   id: string;
   name: string;
+  endpoint: string;
+  model: string;
   connected: boolean;
+  availableModels: string[];
 }
 
 export interface Health {

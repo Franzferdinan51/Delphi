@@ -30,7 +30,7 @@ import {
   nextRunNumber,
   councilorTrackRecords,
 } from "./db.js";
-import { defaultProviders, resolveProviders, providerById, councilorProviderOverrides, DELPHI } from "./config.js";
+import { defaultProviders, resolveProviders, providerById, councilorProviderOverrides, DELPHI, isProviderUsable } from "./config.js";
 import { COUNCILORS, selectCouncilors } from "./council.js";
 import { askLive, demoOpinion, type BriefInput } from "./providers.js";
 import { buildQueries, runQuery, researchNotes } from "./research.js";
@@ -136,7 +136,7 @@ export async function runPipeline(
   const councilSize = input.councilSize ?? 4;
 
   const providers = await resolveProviders(deps.providers || defaultProviders());
-  const liveProviders = providers.filter((p) => p.connected);
+  const liveProviders = providers.filter(isProviderUsable);
   // Optional per-councilor provider reassignment (custom endpoints included).
   const providerOverrides = councilorProviderOverrides();
   const providerIdFor = (councilorId: string, builtin: string): string =>
@@ -239,14 +239,14 @@ export async function runPipeline(
             probability: 50,
             confidence: "Low" as const,
             answer: "",
-            reasoning: `${provider.name} is not connected, so this councilor sat out.`,
+            reasoning: `${provider.name} ${!provider.connected ? "is not connected" : "has no model selected"}, so this councilor sat out.`,
             drivers: [] as string[],
             counterSignals: [] as string[],
             updateTriggers: [] as string[],
             assumptions: [] as string[],
           },
           status: "error" as const,
-          error: `${provider.name} not connected; no live forecast.` as string | undefined,
+          error: `${provider.name} ${!provider.connected ? "not connected" : "has no model selected"}; no live forecast.` as string | undefined,
         };
       }
       const live = await askLive(provider, c, brief);

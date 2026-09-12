@@ -2,6 +2,8 @@
  * Delphi configuration — env vars with sane local-first defaults.
  */
 import type { ProviderConfig } from "./types.js";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { BUILTIN_PROVIDER_IDS } from "./types.js";
 
 export const VERSION = "0.1.0";
@@ -46,9 +48,10 @@ export function customProviders(): ProviderConfig[] {
       id,
       name: String(s.name || id),
       endpoint: process.env[envKey("ENDPOINT")] || endpoint,
-      model: process.env[envKey("MODEL")] || String(s.model || "default"),
+      model: process.env[envKey("MODEL")] || String(s.model || ""),
       apiKey: process.env[envKey("API_KEY")] || String(s.apiKey || ""),
       connected: false,
+      availableModels: [],
     } satisfies ProviderConfig;
   });
 }
@@ -59,49 +62,55 @@ export function defaultProviders(): ProviderConfig[] {
       id: "lmstudio",
       name: "LM Studio",
       endpoint: process.env.LMSTUDIO_URL || "http://127.0.0.1:1234/v1",
-      model: process.env.LMSTUDIO_MODEL || "local-model",
+      model: process.env.LMSTUDIO_MODEL || "",
       apiKey: process.env.LM_API_TOKEN || "",
       connected: false,
+      availableModels: [],
     },
     {
       id: "minimax",
       name: "MiniMax",
       endpoint: process.env.MINIMAX_ENDPOINT || "https://api.minimax.io/v1",
-      model: process.env.MINIMAX_MODEL || "MiniMax-M2.7",
+      model: process.env.MINIMAX_MODEL || "",
       apiKey: process.env.MINIMAX_API_KEY || "",
       connected: false,
+      availableModels: [],
     },
     {
       id: "grok",
       name: "Grok",
       endpoint: process.env.GROK_ENDPOINT || "https://api.x.ai/v1",
-      model: process.env.GROK_MODEL || "grok-4.5",
+      model: process.env.GROK_MODEL || "",
       apiKey: process.env.XAI_API_KEY || process.env.GROK_API_KEY || "",
       connected: false,
+      availableModels: [],
     },
     {
       id: "openai",
       name: "OpenAI",
       endpoint: process.env.OPENAI_ENDPOINT || "https://api.openai.com/v1",
-      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      model: process.env.OPENAI_MODEL || "",
       apiKey: process.env.OPENAI_API_KEY || "",
       connected: false,
+      availableModels: [],
     },
     {
       id: "nvidia",
       name: "NVIDIA NIM",
       endpoint: process.env.NVIDIA_ENDPOINT || "https://integrate.api.nvidia.com/v1",
-      model: process.env.NVIDIA_MODEL || "nvidia/llama-3.1-nemotron-70b-instruct",
+      model: process.env.NVIDIA_MODEL || "",
       apiKey: process.env.NVIDIA_API_KEY || "",
       connected: false,
+      availableModels: [],
     },
     {
       id: "opencode",
       name: "OpenCode Zen (free)",
       endpoint: process.env.OPENCODE_ENDPOINT || "https://opencode.ai/zen/v1",
-      model: process.env.OPENCODE_MODEL || "claude-sonnet-4-6",
+      model: process.env.OPENCODE_MODEL || "",
       apiKey: process.env.OPENCODE_API_KEY || "",
       connected: false,
+      availableModels: [],
     },
     // Arbitrary custom OpenAI-compatible endpoints (DELPHI_PROVIDERS).
     ...customProviders(),
@@ -119,31 +128,95 @@ export function councilorProviderOverrides(): Record<string, string> {
 }
 
 /**
- * Mark providers connected: probe local/keyless endpoints, otherwise trust
- * an API key's presence. LM Studio is probed first because it's the
- * default local engine.
+ * Parse an OpenAI-style model catalog (`{data:[{id}]}` or a bare array)
+ * into sorted unique model IDs.
+ */
+function parseModelCatalog(data: unknown): string[] {
+  const raw = Array.isArray(data) ? data : (data as { data?: unknown } | null)?.data;
+  if (!Array.isArray(raw)) return [];
+  const ids = raw
+    .map((m) => {
+      const id = (m as { id?: unknown } | null)?.id;
+      return typeof id === "string" ? id.trim() : "";
+    })
+    .filter((id) => id.length > 0);
+  return [...new Set(ids)].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Pull the live model catalog from a provider's OpenAI-compatible /models
+ * endpoint. Delphi never hardcodes model IDs -- this is the source of truth
+ * for what a provider can run. Returns [] when unreachable.
+ */
+export async function listProviderModels(p: ProviderConfig, timeoutMs = 8000): Promise<string[]> {
+  try {
+    const res = await fetch(`${p.endpoint.replace(/\/$/, "")}/models`, {
+      headers: p.apiKey.trim() ? { Authorization: `Bearer ${p.apiKey.trim()}` } : {},
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return [];
+    return parseModelCatalog(await res.json());
+  } catch {
+    return [];
+  }
+}
+
+/** Where the user's chosen provider models persist (next to the SQLite db). */
+function modelChoicesPath(): string {
+  return (
+    process.env.DELPHI_PROVIDER_MODELS_FILE || join(dirname(DELPHI.dbPath), "provider-models.json")
+  );
+}
+
+/** Provider id -> chosen model id, as saved by the user. */
+export function readModelChoices(): Record<string, string> {
+  try {
+    const data = JSON.parse(readFileSync(modelChoicesPath(), "utf8")) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (typeof v === "string" && v.trim()) out[k] = v.trim();
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Persist the user's model choice for a provider. */
+export function writeModelChoice(id: string, model: string): void {
+  const choices = readModelChoices();
+  choices[id] = model;
+  mkdirSync(dirname(modelChoicesPath()), { recursive: true });
+  writeFileSync(modelChoicesPath(), JSON.stringify(choices, null, 2) + "\n");
+}
+
+/**
+ * Resolve providers: connectivity plus the live model catalog pulled from
+ * each provider's /models API. Model precedence: explicit env var, then the
+ * saved user choice, then auto-pick when the provider exposes exactly one
+ * model, otherwise unset ("").
  */
 export async function resolveProviders(
   providers: ProviderConfig[],
 ): Promise<ProviderConfig[]> {
+  const choices = readModelChoices();
   return Promise.all(
     providers.map(async (p) => {
-      if (p.apiKey.trim()) return { ...p, connected: true };
-      // Keyless local servers (LM Studio, Ollama, vLLM, …) allow probing.
-      try {
-        const res = await fetch(
-          `${p.endpoint.replace(/\/$/, "")}/models`,
-          {
-            headers: p.apiKey ? { Authorization: `Bearer ${p.apiKey}` } : {},
-            signal: AbortSignal.timeout(5000),
-          },
-        );
-        return { ...p, connected: res.ok };
-      } catch {
-        return { ...p, connected: false };
-      }
+      const availableModels = await listProviderModels(p);
+      // Keyed providers are trusted even if /models is unhappy; keyless
+      // local servers (LM Studio, Ollama, vLLM, etc.) must answer the probe.
+      const connected = p.apiKey.trim().length > 0 ? true : availableModels.length > 0;
+      let model = p.model.trim();
+      if (!model && choices[p.id]) model = choices[p.id];
+      if (!model && availableModels.length === 1) model = availableModels[0];
+      return { ...p, connected, model, availableModels };
     }),
   );
+}
+
+/** A provider can run live forecasts only when reachable AND a model is chosen. */
+export function isProviderUsable(p: ProviderConfig): boolean {
+  return p.connected && p.model.trim().length > 0;
 }
 
 export function providerById(

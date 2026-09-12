@@ -235,6 +235,7 @@ export async function providersView() {
       endpoint: p.endpoint,
       model: p.model,
       connected: p.connected,
+      availableModels: p.availableModels,
     })),
   };
 }

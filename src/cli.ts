@@ -14,7 +14,7 @@ import { runPipeline } from "./pipeline.js";
 import { resolveForecast } from "./resolve.js";
 import { seedIfEmpty } from "./seed.js";
 import { COUNCILORS, councilorById } from "./council.js";
-import { DELPHI, VERSION } from "./config.js";
+import { DELPHI, VERSION, defaultProviders, resolveProviders, listProviderModels, writeModelChoice } from "./config.js";
 import type { PipelineEvent, QuestionType } from "./types.js";
 
 function usage(): never {
@@ -28,6 +28,9 @@ Usage:
   delphi leaderboard
   delphi list
   delphi show <id>
+  delphi providers                    (provider status + live model catalogs)
+  delphi models <provider>            (list models pulled from the provider's API)
+  delphi set-model <provider> <model> (choose a provider's model)
 
 Env: DELPHI_DEMO (default true), DELPHI_DB, DELPHI_PORT,
      LMSTUDIO_URL, MINIMAX_API_KEY, XAI_API_KEY, OPENAI_API_KEY,
@@ -223,6 +226,56 @@ function cmdShow(db: DatabaseSync, args: Args): void {
   console.log();
 }
 
+async function cmdProviders(): Promise<void> {
+  const providers = await resolveProviders(defaultProviders());
+  for (const p of providers) {
+    const state = !p.connected ? "offline" : p.model ? "live" : "no model selected";
+    console.log(
+      `${p.id} -- ${p.name} [${state}] model=${p.model || "(none)"} catalog=${p.availableModels.length} models`,
+    );
+  }
+}
+
+async function cmdModels(args: Args): Promise<void> {
+  const id = (args._[1] || "").toLowerCase();
+  if (!id) {
+    console.error("Usage: delphi models <provider>");
+    process.exit(1);
+  }
+  const providers = await resolveProviders(defaultProviders());
+  const p = providers.find((x) => x.id === id);
+  if (!p) {
+    console.error(`Unknown provider: ${id}`);
+    process.exit(1);
+  }
+  if (!p.availableModels.length) {
+    console.error(`${p.name} is unreachable or exposes no models (connected=${p.connected}).`);
+    process.exit(1);
+  }
+  for (const m of p.availableModels) console.log(m + (m === p.model ? "  (selected)" : ""));
+}
+
+async function cmdSetModel(args: Args): Promise<void> {
+  const id = (args._[1] || "").toLowerCase();
+  const model = String(args._[2] || "").trim();
+  if (!id || !model) {
+    console.error("Usage: delphi set-model <provider> <model>");
+    process.exit(1);
+  }
+  const providers = await resolveProviders(defaultProviders());
+  const p = providers.find((x) => x.id === id);
+  if (!p) {
+    console.error(`Unknown provider: ${id}`);
+    process.exit(1);
+  }
+  if (p.availableModels.length > 0 && !p.availableModels.includes(model)) {
+    console.error(`Unknown model "${model}" for ${p.name}. Run: delphi models ${id}`);
+    process.exit(1);
+  }
+  writeModelChoice(id, model);
+  console.log(`Set ${p.name} model -> ${model}`);
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const cmd = args._[0];
@@ -235,6 +288,9 @@ async function main(): Promise<void> {
     case "leaderboard": cmdLeaderboard(db); break;
     case "list": cmdList(db); break;
     case "show": cmdShow(db, args); break;
+    case "providers": await cmdProviders(); break;
+    case "models": await cmdModels(args); break;
+    case "set-model": await cmdSetModel(args); break;
     default: usage();
   }
 }

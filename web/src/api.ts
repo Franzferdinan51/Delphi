@@ -7,6 +7,7 @@ import type {
   QuestionSummary,
   ResolveResponse,
   StreamEvent,
+  ProviderInfo,
 } from "./types";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -98,4 +99,21 @@ export async function askStream(
       }
     }
   }
+}
+
+export interface ProvidersResponse {
+  ok: boolean;
+  providers: ProviderInfo[];
+}
+
+export function getProviders(): Promise<ProvidersResponse> {
+  return apiFetch<ProvidersResponse>("/providers");
+}
+
+export function setProviderModel(id: string, model: string): Promise<ProvidersResponse> {
+  return apiFetch<ProvidersResponse>(`/providers/${encodeURIComponent(id)}/model`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model }),
+  });
 }

@@ -26,6 +26,11 @@ export interface ProviderConfig {
   name: string;
   endpoint: string;
   model: string;
+  /**
+   * Live model IDs pulled from the provider's /models endpoint during
+   * resolution. Empty when the catalog is unreachable. Nothing is hardcoded.
+   */
+  availableModels: string[];
   apiKey: string;
   connected: boolean;
 }

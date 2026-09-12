@@ -30,15 +30,16 @@ Install the CLI globally-ish: `npm run build && npm link` → `delphi ask …`.
 
 ## Going live
 
-| Provider | Env var | Default |
+| Provider | Env vars | Notes |
 |---|---|---|
-| LM Studio (local-first default) | `LMSTUDIO_URL`, `LMSTUDIO_MODEL`, `LM_API_TOKEN` | `http://127.0.0.1:1234/v1` |
-| MiniMax | `MINIMAX_API_KEY`, `MINIMAX_MODEL`, `MINIMAX_ENDPOINT` | `MiniMax-M2.7` |
-| Grok (xAI) | `XAI_API_KEY`, `GROK_MODEL`, `GROK_ENDPOINT` | `grok-4.5` |
-| OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_ENDPOINT` | `gpt-4o-mini` |
-| NVIDIA NIM | `NVIDIA_API_KEY`, `NVIDIA_MODEL`, `NVIDIA_ENDPOINT` | `nvidia/llama-3.1-nemotron-70b-instruct` |
-| OpenCode Zen (free) | `OPENCODE_MODEL`, `OPENCODE_ENDPOINT` (no key needed) | `claude-sonnet-4-6` |
+| LM Studio (local-first default) | `LMSTUDIO_URL`, `LMSTUDIO_MODEL`, `LMSTUDIO_API_KEY` | Probed locally; model auto-selected when exactly one is loaded |
+| MiniMax | `MINIMAX_API_KEY`, `MINIMAX_MODEL`, `MINIMAX_ENDPOINT` | |
+| Grok (xAI) | `XAI_API_KEY`, `GROK_MODEL`, `GROK_ENDPOINT` | |
+| OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_ENDPOINT` | |
+| NVIDIA NIM | `NVIDIA_API_KEY`, `NVIDIA_MODEL`, `NVIDIA_ENDPOINT` | API key from build.nvidia.com |
+| OpenCode Zen (free) | `OPENCODE_MODEL`, `OPENCODE_ENDPOINT` | No key needed |
 
+Delphi never hardcodes model IDs. On startup it pulls each provider's live model catalog from its `/models` API. Choose models in the Providers page of the web UI, with `delphi set-model <provider> <model>`, via the `*_MODEL` env vars, or through the MCP `set_provider_model` tool. `delphi models <provider>` (or `list_provider_models`) shows what's actually available right now.
 Every provider speaks the OpenAI-compatible `/chat/completions` protocol, so LM Studio, vLLM, Ollama, or any other endpoint works by changing the URL. Demo mode stays on unless you flip it (`DELPHI_DEMO=false`).
 
 ### Custom providers
