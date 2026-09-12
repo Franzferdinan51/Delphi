@@ -49,13 +49,12 @@ Add arbitrary OpenAI-compatible endpoints via `DELPHI_PROVIDERS` (JSON array):
 ```bash
 export DELPHI_PROVIDERS='[
   {"id":"deepseek","name":"DeepSeek","endpoint":"https://api.deepseek.com/v1",
-   "model":"deepseek-chat","apiKey":"sk-..."},
-  {"id":"ollama","name":"Ollama (local)","endpoint":"http://127.0.0.1:11434/v1",
-   "model":"qwen3:8b"}
+   "apiKey":"sk-..."},
+  {"id":"ollama","name":"Ollama (local)","endpoint":"http://127.0.0.1:11434/v1"}
 ]'
 ```
 
-Keyless local servers are probed at `/models`; keyed ones are marked connected when the key is present. Secrets can also come from per-provider env vars (`DELPHI_PROVIDER_<ID>_API_KEY`, `_ENDPOINT`, `_MODEL`) instead of living in the JSON. Custom providers show up in `/api/health` and `get_providers`, and any councilor can be reassigned to one:
+Leave `model` empty — Delphi fills it from the provider's live `/models` catalog (auto-pick when exactly one model is loaded, otherwise you choose it). Keyless local servers are probed at `/models`; keyed ones are marked connected when the key is present. Secrets can also come from per-provider env vars (`DELPHI_PROVIDER_<ID>_API_KEY`, `_ENDPOINT`, `_MODEL`) instead of living in the JSON. Custom providers show up in `/api/health` and `get_providers`, and any councilor can be reassigned to one:
 
 ```bash
 export DELPHI_COUNCILOR_PROVIDER_SKEPTIC=deepseek   # skeptic now runs on DeepSeek
@@ -63,7 +62,7 @@ export DELPHI_COUNCILOR_PROVIDER_SKEPTIC=deepseek   # skeptic now runs on DeepSe
 
 Councilor ids: `base-rate-analyst`, `domain-expert`, `skeptic`, `superforecaster`, `quant`.
 
-Research: `SEARXNG_URL` (default `http://127.0.0.1:8080`), or `TAVILY_API_KEY` / `BRAVE_API_KEY` to use those instead. Other knobs: `DELPHI_PORT` (8790), `DELPHI_HOST`, `DELPHI_DB` (default `data/delphi.db`). Requires Node ≥ 22 (uses `node:sqlite`).
+Research: `SEARXNG_URL` (default `http://127.0.0.1:8080`), or `TAVILY_API_KEY` / `BRAVE_API_KEY` to use those instead. Other knobs: `DELPHI_PORT` (8790), `DELPHI_HOST`, `DELPHI_DB` (default `data/delphi.db`), `DELPHI_ALLOWED_ORIGINS` (comma-separated extra CORS origins; browsers are same-origin by default). Requires Node ≥ 22 (uses `node:sqlite`).
 
 ## Architecture
 
@@ -92,18 +91,18 @@ web/            Vite + React UI (built by a second agent, same contract)
 1. **Intake** — question, type (`binary` | `timing` | `numeric` | `categorical`), deadline, resolution criteria, context → SQLite.
 2. **Question gate** — sharpens vague wording into a falsifiable question, tightens (or drafts) resolution criteria, Fermi-decomposes into 2–4 estimable sub-questions, flags ambiguities, and scores question quality 0–100. The sharpened question drives everything downstream; the original is always preserved.
 3. **Research** — budgeted web research (2 queries × 6 results), 5-minute cache, URL dedup; notes injected into every councilor's brief.
-4. **Priors** — Bayesian anchors collected *before* deliberation: the outside-view base rate for the reference class (lightweight LLM estimate) and the live implied probability from Polymarket when a liquid related market exists. Councilors must explicitly argue for or against moving away from each anchor.
+4. **Priors** — Bayesian anchors collected *before* deliberation: the outside-view base rate for the reference class (lightweight LLM estimate) and the live implied probability from Polymarket **only when the market question text and end date match exactly**, volume ≥ $5k, and it is an active Yes/No market. Unrelated search hits are ignored. Councilors must explicitly argue for or against moving away from each anchor.
 5. **Deliberation** — 3–5 personas selected by topic relevance forecast **independently** (round 1, parallel). Each persona is a system prompt + assigned provider:
    - **Base-Rate Analyst** — outside view, reference classes
    - **Domain Expert** — inside view, causal mechanisms
    - **Skeptic** — red team, steelmans the opposite
    - **Superforecaster** — Fermi decomposition, Bayesian updating
    - **Quant Modeler** — distributions, explicit numbers
-4. **Critic** — round 2: each councilor sees peers' reasoning and may update (anchoring to the group is penalized in the prompt).
-5. **Aggregation** — logarithmic opinion pool (geometric-mean consensus), weights from each councilor's resolved Brier history, then extremization. Cold start: equal weights until 5+ resolved forecasts each. Emits a **0–100 confidence score** blending council agreement, prior convergence, research evidence, and track-record credibility, with a per-component breakdown.
-6. **Output** — central answer, calibrated probability, full readout (thesis, drivers, counter-signals, update triggers, assumptions, best/worst case, timeline, indicators, per-councilor opinions with reasoning).
-7. **Resolution & grading** — `resolve` records the outcome; Brier + log scores per councilor and provider update the leaderboard. This self-grading loop is the killer feature.
-8. **Belief tracking** — re-running a question (`--rerun <id>` / `existingQuestionId`) appends a new forecast run; the UI charts probability over time.
+6. **Critic** — round 2: each councilor sees peers' reasoning and may update (anchoring to the group is penalized in the prompt). Quality gate requires a 0–100 probability and a reasoning tag. Failed providers are marked `error` and excluded from the pool.
+7. **Aggregation** — logarithmic opinion pool (geometric-mean consensus), weights from each councilor's resolved Brier history, then extremization. Cold start: equal weights until 5+ resolved forecasts each. If **no** usable opinions survive, the run fails instead of publishing a fake forecast. Emits a **0–100 confidence score** (agreement, prior convergence, evidence, track-record) persisted with a per-component breakdown.
+8. **Output** — central answer, calibrated probability, full readout (thesis, drivers, counter-signals, update triggers, assumptions, best/worst case, timeline, indicators, per-councilor opinions with reasoning). Forecast writes are wrapped in a SQLite savepoint.
+9. **Resolution & grading** — `resolve` records the outcome; Brier + log scores per councilor and provider update the leaderboard using the **latest** forecast run (error opinions skipped). This self-grading loop is the killer feature.
+10. **Belief tracking** — re-running a question (`--rerun <id>` / `existingQuestionId`) appends a new forecast run; the UI charts probability over time.
 
 ## Methodology — why each piece exists
 
@@ -116,17 +115,18 @@ web/            Vite + React UI (built by a second agent, same contract)
 
 ## HTTP API
 
-Base `http://127.0.0.1:8790`. All JSON, CORS open.
+Base `http://127.0.0.1:8790`. JSON. CORS is **same-origin by default** (native/CLI clients with no `Origin` still work). Extra browser origins: `DELPHI_ALLOWED_ORIGINS=https://app.example.com`. Invalid JSON bodies return `400`. Ask input is validated with a shared Zod schema (`question` required unless `existingQuestionId`, real `YYYY-MM-DD` deadline, `councilSize` 1–5).
 
 | Method | Route | Notes |
 |---|---|---|
-| `POST` | `/api/ask` | **SSE stream** of pipeline events → final `result`. Body: `question`, `questionType`, `deadline`, `resolutionCriteria?`, `context?`, `demoMode?`, `councilSize?` (3–5), `existingQuestionId?` (re-run) |
+| `POST` | `/api/ask` | **SSE stream** of pipeline events → final `result`. Body: `question`, `questionType`, `deadline`, `resolutionCriteria?`, `context?`, `demoMode?`, `councilSize?` (1–5), `existingQuestionId?` (re-run) |
 | `POST` | `/api/resolve` | `{ id, outcome }` — binary: `yes`/`no`; else `correct`/`incorrect` |
 | `GET` | `/api/questions` | list with latest probability + status |
-| `GET` | `/api/questions/:id` | full detail: readout, belief history, opinions, resolution |
+| `GET` | `/api/questions/:id` | full detail: readout, belief history, opinions, resolution. Ambiguous id prefixes return `409` |
 | `GET` | `/api/leaderboard` | councilors + providers ranked by Brier (lower = better) |
 | `GET` | `/api/calibration` | 10 calibration buckets + Brier-over-time |
-| `GET` | `/api/health` | version, demo mode, provider connectivity |
+| `GET` | `/api/health` | version, demo mode, provider connectivity + live catalogs |
+| `POST` | `/api/providers/:id/model` | persist the chosen model for a provider |
 
 SSE event types: `started`, `phase` (`research`→`deliberation`→`critic`→`aggregation`→`done`), `research`, `opinion` (rounds 1 & 2), `result`, `error`.
 
@@ -149,7 +149,9 @@ POST http://127.0.0.1:8790/mcp
 | `get_leaderboard` | Councilor + provider track records, ranked by Brier |
 | `get_calibration` | Calibration buckets + Brier-over-time |
 | `list_councilors` | The 5 personas: role, topics, default provider |
-| `get_providers` | Built-ins + custom endpoints, with connectivity |
+| `get_providers` | Built-ins + custom endpoints, with connectivity and live catalogs |
+| `list_provider_models` | Pull `/models` for one provider — never a hardcoded list |
+| `set_provider_model` | Persist which catalog model a provider should run |
 | `delphi_health` | Version, demo mode, provider status |
 
 IDs accept unambiguous prefixes, like the CLI.
@@ -177,6 +179,9 @@ delphi resolve <id> <yes|no>     # non-binary: correct|incorrect
 delphi leaderboard
 delphi list
 delphi show <id>
+delphi providers
+delphi models <provider>
+delphi set-model <provider> <model>
 ```
 
 IDs can be unambiguous prefixes (first 8 chars shown everywhere).
@@ -188,7 +193,7 @@ IDs can be unambiguous prefixes (first 8 chars shown everywhere).
 ## What's deliberately not here (yet)
 
 - **Non-binary scoring beyond correct/incorrect.** Timing/numeric/categorical questions score on whether the central answer was right, not how close. Continuous Ranked Probability Score would be the upgrade.
-- **Prediction-market / poll ingestion.** The Quant wants market prices; there's no Polymarket/metaculus fetcher yet.
-- **Auth on the API *and* the MCP endpoint.** Both are loopback-first; put them behind a reverse proxy before exposing them.
+- **Metaculus / other market venues.** Polymarket Yes/No matching is in; other books are not.
+- **Auth tokens on the API *and* the MCP endpoint.** Loopback-first with same-origin CORS; put them behind a reverse proxy (and set `DELPHI_ALLOWED_ORIGINS`) before exposing them.
 - **Multi-user / teams.** Single-user SQLite, like everything else Ryan runs locally.
 - **Automatic resolution.** Outcomes are recorded by hand. Auto-resolution from news feeds is a real roadmap item.
