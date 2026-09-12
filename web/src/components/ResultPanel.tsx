@@ -1,0 +1,141 @@
+import type { Forecast } from "../types";
+import { formatDateTime, toPct } from "../hooks";
+import { Gauge } from "./Gauge";
+import { ConfidenceChip, TypeChip, Chip } from "./ui";
+
+function ListCard({ title, items, className = "" }: { title: string; items: string[]; className?: string }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className={`card rb-card ${className}`}>
+      <h4>{title}</h4>
+      <ul>
+        {items.map((it, i) => (
+          <li key={i}>{it}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function ResultPanel({ forecast }: { forecast: Forecast }) {
+  const r = forecast.readout;
+  const [lo, hi] = forecast.confidenceRange ?? [0, 0];
+  const weights = Object.entries(forecast.weights ?? {});
+  const maxW = Math.max(1, ...weights.map(([, w]) => w));
+  const opinions = [...(forecast.opinions ?? [])].sort(
+    (a, b) => (b.weight ?? 0) - (a.weight ?? 0)
+  );
+
+  return (
+    <div className="card result-panel" id="result">
+      <div className="result-hero">
+        <p className="section-title">Council forecast</p>
+        <h2 className="result-q">{forecast.question}</h2>
+        <div className="result-meta">
+          <TypeChip type={forecast.questionType} />
+          <ConfidenceChip level={forecast.confidence} />
+          <Chip>Run #{forecast.runNumber}</Chip>
+          <Chip>{formatDateTime(forecast.createdAt)}</Chip>
+          {forecast.deadline && <Chip>Deadline {formatDateTime(forecast.deadline)}</Chip>}
+        </div>
+
+        <div className="result-figure">
+          <Gauge value={toPct(forecast.probability)} size={170} />
+          <div className="result-answer-block">
+            <div className="result-answer-label">Council answer</div>
+            <div className="result-answer">{forecast.answer}</div>
+            <div className="range-bar">
+              <div className="range-track">
+                <div
+                  className="range-fill"
+                  style={{ left: `${toPct(lo)}%`, width: `${Math.max(1, toPct(hi) - toPct(lo))}%` }}
+                />
+                <div className="range-tick" style={{ left: `calc(${toPct(forecast.probability)}% - 1px)` }} />
+              </div>
+              <div className="range-labels">
+                <span>90% interval: {Math.round(toPct(lo))}% – {Math.round(toPct(hi))}%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {forecast.summary && <p className="result-summary">{forecast.summary}</p>}
+      </div>
+
+      <div className="readout-body">
+        {r?.thesis && (
+          <div className="card thesis-card">
+            <p className="section-title">Thesis</p>
+            <p>{r.thesis}</p>
+          </div>
+        )}
+
+        <div className="readout-grid">
+          <ListCard title="Key drivers" items={r?.drivers} className="drivers" />
+          <ListCard title="Counter-signals" items={r?.counterSignals} className="counters" />
+          <ListCard title="Update triggers" items={r?.updateTriggers} className="triggers" />
+          <ListCard title="Assumptions" items={r?.assumptions} className="assume" />
+        </div>
+
+        <div className="scenarios">
+          {forecast.bestCase && (
+            <div className="card scenario best">
+              <h4>▲ Best case</h4>
+              <p>{forecast.bestCase}</p>
+            </div>
+          )}
+          {forecast.worstCase && (
+            <div className="card scenario worst">
+              <h4>▼ Worst case</h4>
+              <p>{forecast.worstCase}</p>
+            </div>
+          )}
+        </div>
+
+        {forecast.timeline && (
+          <div className="card timeline-card">
+            <p className="section-title">Timeline</p>
+            <p>{forecast.timeline}</p>
+          </div>
+        )}
+
+        {r?.indicators && r.indicators.length > 0 && (
+          <div className="card indicators-card">
+            <p className="section-title">Indicators to watch</p>
+            <div className="ind-list">
+              {r.indicators.map((ind, i) => (
+                <span key={i} className="ind-pill">
+                  {ind}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {weights.length > 0 && (
+          <div className="card weights-card">
+            <p className="section-title">Aggregation weights</p>
+            {weights
+              .sort((a, b) => b[1] - a[1])
+              .map(([id, w]) => {
+                const op = opinions.find((o) => o.councilorId === id);
+                return (
+                  <div className="weight-row" key={id}>
+                    <span className="wname">{op?.councilorName ?? id}</span>
+                    <span className="wtrack">
+                      <span className="wfill" style={{ width: `${(w / maxW) * 100}%` }} />
+                    </span>
+                    <span className="wval">{w.toFixed(3)}</span>
+                  </div>
+                );
+              })}
+          </div>
+        )}
+
+        <div className="method-note">
+          method: {forecast.method || "logarithmic-opinion-pool"} · {opinions.length} opinions aggregated
+        </div>
+      </div>
+    </div>
+  );
+}
