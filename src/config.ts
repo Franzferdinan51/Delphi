@@ -87,6 +87,22 @@ export function defaultProviders(): ProviderConfig[] {
       apiKey: process.env.OPENAI_API_KEY || "",
       connected: false,
     },
+    {
+      id: "nvidia",
+      name: "NVIDIA NIM",
+      endpoint: process.env.NVIDIA_ENDPOINT || "https://integrate.api.nvidia.com/v1",
+      model: process.env.NVIDIA_MODEL || "nvidia/llama-3.1-nemotron-70b-instruct",
+      apiKey: process.env.NVIDIA_API_KEY || "",
+      connected: false,
+    },
+    {
+      id: "opencode",
+      name: "OpenCode Zen (free)",
+      endpoint: process.env.OPENCODE_ENDPOINT || "https://opencode.ai/zen/v1",
+      model: process.env.OPENCODE_MODEL || "claude-sonnet-4-6",
+      apiKey: process.env.OPENCODE_API_KEY || "",
+      connected: false,
+    },
     // Arbitrary custom OpenAI-compatible endpoints (DELPHI_PROVIDERS).
     ...customProviders(),
   ];

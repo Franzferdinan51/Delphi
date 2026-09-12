@@ -36,6 +36,8 @@ Install the CLI globally-ish: `npm run build && npm link` → `delphi ask …`.
 | MiniMax | `MINIMAX_API_KEY`, `MINIMAX_MODEL`, `MINIMAX_ENDPOINT` | `MiniMax-M2.7` |
 | Grok (xAI) | `XAI_API_KEY`, `GROK_MODEL`, `GROK_ENDPOINT` | `grok-4.5` |
 | OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_ENDPOINT` | `gpt-4o-mini` |
+| NVIDIA NIM | `NVIDIA_API_KEY`, `NVIDIA_MODEL`, `NVIDIA_ENDPOINT` | `nvidia/llama-3.1-nemotron-70b-instruct` |
+| OpenCode Zen (free) | `OPENCODE_MODEL`, `OPENCODE_ENDPOINT` (no key needed) | `claude-sonnet-4-6` |
 
 Every provider speaks the OpenAI-compatible `/chat/completions` protocol, so LM Studio, vLLM, Ollama, or any other endpoint works by changing the URL. Demo mode stays on unless you flip it (`DELPHI_DEMO=false`).
 
